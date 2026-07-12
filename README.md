@@ -107,12 +107,23 @@ python excel_rag_chatbot.py --excel "2026.01.26_肤润康-常见咨询问题_v2(
 - `FAQ_EXCEL_PATH`：Excel 路径，默认读取当前目录的肤润康题库
 - `FAQ_TOP_K`：检索候选条数，默认 5
 - `FAQ_MIN_SCORE`：最低命中阈值，默认 0.1
-- `OPENAI_MODEL`：模型名，默认 `gpt-4o-mini`
+- `OPENAI_MODEL`：模型名，默认 `qwen3.6-flash`
+- `OPENAI_BASE_URL`：默认 `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`
 
----
+## 6) GitHub 自动部署到阿里云 ECS
 
-如果你要继续升级，我可以下一步直接给你加：
+仓库已包含 `.github/workflows/deploy.yml`。
 
-- FastAPI 接口（可接企微/小程序）
-- 会话上下文记忆（多轮客服）
-- 敏感词和合规兜底规则
+在 GitHub → Settings → Secrets and variables → Actions 添加：
+
+- `ECS_HOST`：服务器公网 IP
+- `ECS_USER`：SSH 用户名（如 `root`）
+- `ECS_PASSWORD`：SSH 密码
+
+服务器需先手动部署一次，并保留 `~/fuyunhon_cs/.env`（不要提交到 Git）。
+
+之后每次 `push` 到 `main`，GitHub Actions 会自动：
+
+1. SSH 登录 ECS
+2. `git pull origin main`
+3. `docker compose up -d --build`
