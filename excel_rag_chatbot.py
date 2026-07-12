@@ -2,7 +2,7 @@ import argparse
 import os
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -23,7 +23,7 @@ class FaqItem:
 
 
 class ExcelFaqRagBot:
-    def __init__(self, excel_path: str, top_k: int = 5, min_score: float = 0.1) -> None:
+    def __init__(self, excel_path: str, top_k: int = 5, min_score: float = 0.05) -> None:
         self.excel_path = excel_path
         self.top_k = top_k
         self.min_score = min_score
@@ -100,7 +100,8 @@ class ExcelFaqRagBot:
             raise ValueError("未识别到 FAQ 问答列（需要包含“咨询问题/解答”字段）。")
 
         self.items = items
-        corpus = [f"问题: {it.question}\n回答: {it.answer}" for it in self.items]
+        # 问题权重更高，回答作为补充，提升短问命中率
+        corpus = [f"{it.question} {it.question} {it.answer}" for it in self.items]
         self.doc_vectors = self.vectorizer.fit_transform(corpus)
 
     def retrieve(self, user_query: str) -> List[Tuple[float, FaqItem]]:
@@ -109,6 +110,16 @@ class ExcelFaqRagBot:
 
         q_vec = self.vectorizer.transform([user_query])
         scores = cosine_similarity(q_vec, self.doc_vectors)[0]
+
+        # 额外叠加关键词重合分，避免纯 TF-IDF 对短中文问句过严
+        query_chars = set(user_query.replace(" ", ""))
+        for i, item in enumerate(self.items):
+            q_chars = set(item.question.replace(" ", ""))
+            if not query_chars or not q_chars:
+                continue
+            overlap = len(query_chars & q_chars) / max(len(query_chars), 1)
+            scores[i] = float(scores[i]) + 0.25 * overlap
+
         ranked = sorted(
             [(float(score), self.items[i]) for i, score in enumerate(scores)],
             key=lambda x: x[0],
@@ -132,14 +143,13 @@ class ExcelFaqRagBot:
         best_score, best_item = ranked[0]
         if best_score < self.min_score:
             return (
-                "抱歉，题库里没有足够匹配的信息。\n"
-                "你可以补充关键词（比如：孕妇、敏感肌、使用顺序、搭配禁忌、见效周期）我再帮你查。"
+                "亲，这个问题题库里暂时没有完全对应的说明。"
+                "你可以再补充一下具体场景，比如：孕妇/备孕、敏感肌、使用顺序、搭配禁忌、见效周期，我再帮你查。"
             )
 
         return (
-            "根据题库内容，建议这样回复客户：\n"
-            f"{best_item.answer}\n\n"
-            f"（命中问题：{best_item.question}，匹配分数：{best_score:.3f}）"
+            f"亲，关于“{best_item.question}”，根据题库说明：\n"
+            f"{best_item.answer}"
         )
 
     def _call_ai(
@@ -157,15 +167,18 @@ class ExcelFaqRagBot:
 
         sources = self._render_source_block(ranked)
         system_prompt = (
-            "你是电商客服助手。你只能依据给定题库片段回答，禁止使用外部知识。\n"
-            "如果题库无法支持结论，必须明确说明“题库未覆盖”，并引导用户补充问题。\n"
-            "输出风格：口语化、礼貌、简洁，可直接发给客户。\n"
-            "不要暴露“分数、sheet、row”等技术信息。"
+            "你是“肤润康”电商客服助手。你只能依据给定题库片段回答，禁止使用外部知识。\n"
+            "要求：\n"
+            "1. 直接给客户可读的最终回复，不要输出分析过程。\n"
+            "2. 语气亲切、口语化、简洁，像真人客服。\n"
+            "3. 可适当改写措辞，但事实必须来自题库，不可编造。\n"
+            "4. 如果题库无法支持结论，明确说题库暂未覆盖，并引导补充关键词。\n"
+            "5. 不要暴露分数、sheet、row、API、错误码等技术信息。"
         )
         user_prompt = (
             f"客户问题：{user_query}\n\n"
             f"题库检索结果：\n{sources}\n\n"
-            "请给出最终客服回复。"
+            "请直接输出最终客服回复文本。"
         )
 
         client = OpenAI(
@@ -185,7 +198,7 @@ class ExcelFaqRagBot:
     def answer(
         self,
         user_query: str,
-        model: str = "gpt-4o-mini",
+        model: str = "qwen3.6-flash",
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
     ) -> str:
@@ -204,7 +217,9 @@ class ExcelFaqRagBot:
             if ai_reply:
                 return ai_reply
         except Exception as exc:  # noqa: BLE001
-            return f"{self._grounded_fallback_answer(ranked)}\n\n（AI生成失败，已切换检索直出：{exc}）"
+            # 不把技术错误暴露给前端用户
+            print(f"[warn] AI 调用失败，已切换题库直出: {exc}", file=sys.stderr)
+            return self._grounded_fallback_answer(ranked)
 
         return self._grounded_fallback_answer(ranked)
 
@@ -213,8 +228,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Excel FAQ RAG 客服机器人（仅 AI 模式）")
     parser.add_argument("--excel", required=True, help="Excel 文件路径（支持 .xls/.xlsx）")
     parser.add_argument("--top-k", type=int, default=5, help="每次检索候选条数，默认 5")
-    parser.add_argument("--min-score", type=float, default=0.1, help="最低命中分数阈值，默认 0.1")
-    parser.add_argument("--model", default="gpt-4o-mini", help="AI 模型名")
+    parser.add_argument("--min-score", type=float, default=0.05, help="最低命中分数阈值，默认 0.05")
+    parser.add_argument("--model", default="qwen3.6-flash", help="AI 模型名（DashScope 如 qwen3.6-flash）")
     parser.add_argument("--base-url", default=None, help="OpenAI 兼容接口地址（可选）")
     parser.add_argument("--api-key", default=None, help="API Key（可选，默认读取 OPENAI_API_KEY）")
     parser.add_argument(

@@ -11,7 +11,7 @@ from excel_rag_chatbot import ExcelFaqRagBot
 
 
 DEFAULT_EXCEL = "2026.01.26_肤润康-常见咨询问题_v2(1).xls"
-DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_MODEL = "qwen3.6-flash"
 
 
 class ChatRequest(BaseModel):
