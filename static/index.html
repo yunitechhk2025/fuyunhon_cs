@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>肤润康 AI 客服</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #f3f6fb;
+        color: #172033;
+        font-family: Arial, "Microsoft YaHei", sans-serif;
+      }
+
+      .page {
+        display: flex;
+        min-height: 100vh;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .chat {
+        width: min(920px, 100%);
+        height: min(760px, calc(100vh - 48px));
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border-radius: 20px;
+        background: #ffffff;
+        box-shadow: 0 20px 60px rgba(22, 36, 63, 0.15);
+      }
+
+      .header {
+        padding: 20px 24px;
+        border-bottom: 1px solid #e8edf5;
+        background: linear-gradient(135deg, #2f6fed, #25b8a8);
+        color: #ffffff;
+      }
+
+      .header h1 {
+        margin: 0;
+        font-size: 22px;
+      }
+
+      .header p {
+        margin: 8px 0 0;
+        opacity: 0.9;
+        font-size: 14px;
+      }
+
+      .messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 24px;
+      }
+
+      .message {
+        max-width: 78%;
+        margin-bottom: 16px;
+        padding: 13px 15px;
+        border-radius: 16px;
+        white-space: pre-wrap;
+        line-height: 1.6;
+        font-size: 15px;
+      }
+
+      .bot {
+        background: #f0f4fa;
+        border-top-left-radius: 4px;
+      }
+
+      .user {
+        margin-left: auto;
+        background: #2f6fed;
+        color: #ffffff;
+        border-top-right-radius: 4px;
+      }
+
+      .composer {
+        display: flex;
+        gap: 12px;
+        padding: 16px;
+        border-top: 1px solid #e8edf5;
+        background: #ffffff;
+      }
+
+      textarea {
+        flex: 1;
+        resize: none;
+        min-height: 48px;
+        max-height: 140px;
+        border: 1px solid #d7dfec;
+        border-radius: 14px;
+        padding: 13px 14px;
+        outline: none;
+        font: inherit;
+      }
+
+      textarea:focus {
+        border-color: #2f6fed;
+      }
+
+      button {
+        width: 104px;
+        border: 0;
+        border-radius: 14px;
+        background: #2f6fed;
+        color: #ffffff;
+        font-size: 15px;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="chat">
+        <header class="header">
+          <h1>肤润康 AI 客服</h1>
+          <p>回答仅基于 Excel 常见问题库，不命中时会提示题库未覆盖。</p>
+        </header>
+
+        <div id="messages" class="messages">
+          <div class="message bot">你好，我是肤润康 AI 客服。请输入客户问题，我会根据题库生成回复。</div>
+        </div>
+
+        <form id="form" class="composer">
+          <textarea id="input" placeholder="例如：孕妇能用吗？" rows="1"></textarea>
+          <button id="send" type="submit">发送</button>
+        </form>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("form");
+      const input = document.getElementById("input");
+      const send = document.getElementById("send");
+      const messages = document.getElementById("messages");
+
+      function addMessage(text, role) {
+        const el = document.createElement("div");
+        el.className = `message ${role}`;
+        el.textContent = text;
+        messages.appendChild(el);
+        messages.scrollTop = messages.scrollHeight;
+        return el;
+      }
+
+      async function ask(message) {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || "请求失败");
+        }
+        return data.answer;
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const text = input.value.trim();
+        if (!text) return;
+
+        input.value = "";
+        addMessage(text, "user");
+        const loading = addMessage("正在查询题库并生成回复...", "bot");
+        send.disabled = true;
+
+        try {
+          loading.textContent = await ask(text);
+        } catch (err) {
+          loading.textContent = `出错了：${err.message}`;
+        } finally {
+          send.disabled = false;
+          input.focus();
+        }
+      });
+
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          form.requestSubmit();
+        }
+      });
+    </script>
+  </body>
+</html>

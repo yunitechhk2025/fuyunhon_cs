@@ -1,0 +1,13 @@
+services:
+  faq-chatbot:
+    build: .
+    container_name: fuyunhon-faq-chatbot
+    env_file:
+      - .env
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - "./2026.01.26_肤润康-常见咨询问题_v2(1).xls:/data/faq.xls:ro"
+    environment:
+      FAQ_EXCEL_PATH: /data/faq.xls
+    restart: unless-stopped
