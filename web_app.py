@@ -159,7 +159,7 @@ async def ask(req: AskRequest) -> AskResponse:
                 conversation_id, result.matched, result.matched_question, result.matched_answer, result.score
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"[warn] 全机器模式生成回复失败: {exc}", file=sys.stderr)
+            print(f"[warn] 全AI模式生成回复失败: {exc}", file=sys.stderr)
             reply = "抱歉，暂时无法生成回复，请稍后再试或联系人工客服。"
         database.mark_answered(conversation_id, reply)
         return AskResponse(conversation_id=conversation_id, status="answered", answer=reply, mode=mode)
