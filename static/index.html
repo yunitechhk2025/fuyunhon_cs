@@ -126,7 +126,7 @@
       <section class="chat">
         <header class="header">
           <h1>肤润康 AI 客服</h1>
-          <p>回答仅基于 Excel 常见问题库，不命中时会提示题库未覆盖。</p>
+          <p>智能匹配常见问题库，必要时将转接人工客服为您解答。</p>
         </header>
 
         <div id="messages" class="messages">
@@ -146,6 +146,16 @@
       const send = document.getElementById("send");
       const messages = document.getElementById("messages");
 
+      const SESSION_KEY = "fuyunhon_session_id";
+      function getSessionId() {
+        let id = localStorage.getItem(SESSION_KEY);
+        if (!id) {
+          id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+          localStorage.setItem(SESSION_KEY, id);
+        }
+        return id;
+      }
+
       function addMessage(text, role) {
         const el = document.createElement("div");
         el.className = `message ${role}`;
@@ -156,17 +166,35 @@
       }
 
       async function ask(message) {
-        const res = await fetch("/api/chat", {
+        const res = await fetch("/api/ask", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message }),
+          body: JSON.stringify({ message, session_id: getSessionId() }),
         });
 
         const data = await res.json();
         if (!res.ok) {
           throw new Error(data.detail || "请求失败");
         }
-        return data.answer;
+        return data;
+      }
+
+      async function pollAnswer(conversationId, loadingEl) {
+        const maxAttempts = 200; // 约 10 分钟（每 3 秒一次）
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          try {
+            const res = await fetch(`/api/conversations/${conversationId}`);
+            const data = await res.json();
+            if (data.status === "answered" && data.answer) {
+              loadingEl.textContent = data.answer;
+              return;
+            }
+          } catch (err) {
+            // 网络抖动时静默重试
+          }
+        }
+        loadingEl.textContent = "客服暂时繁忙，请稍后重新提问或换个方式联系我们。";
       }
 
       form.addEventListener("submit", async (event) => {
@@ -180,7 +208,13 @@
         send.disabled = true;
 
         try {
-          loading.textContent = await ask(text);
+          const data = await ask(text);
+          if (data.status === "answered") {
+            loading.textContent = data.answer;
+          } else {
+            loading.textContent = "已收到您的问题，正在为您转接人工客服，请稍候...";
+            await pollAnswer(data.conversation_id, loading);
+          }
         } catch (err) {
           loading.textContent = `出错了：${err.message}`;
         } finally {

@@ -5,3 +5,6 @@ xlrd
 openai
 fastapi
 uvicorn
+bcrypt
+pyjwt
+websockets

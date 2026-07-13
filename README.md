@@ -1,7 +1,16 @@
 # Excel FAQ RAG 客服机器人
 
-这是一个可直接落地的版本：把 Excel 常见问题库作为唯一知识源，先做检索，再用 AI 生成更自然的客服话术。  
-机器人只提供“题库 + AI”模式，且被限制为“只依据检索结果回答”。
+这是一个可直接落地的版本：把 Excel 常见问题库作为唯一知识源，先做检索，再用 AI 生成更自然的客服话术。
+
+现已支持 **三种工作模式**，可在客服工作台中随时切换：
+
+| 模式 | 说明 |
+| --- | --- |
+| 全机器 (`auto`) | AI 自动检索题库并直接回复客户，无需人工介入（原有行为，默认模式） |
+| 全人工 (`manual`) | 所有问题进入人工队列，由客服手动查看并回复，AI 不参与 |
+| 人机协同 (`collab`) | AI 先生成建议回复（仅客服可见），客服审核/编辑后再发送给客户 |
+
+客户网页 (`/`) 始终只显示一个聊天框；如命中全人工或协同模式，客户会看到“正在转接人工客服”的提示并自动轮询等待回复，无需手动刷新。
 
 ## 1) 准备 Excel 题库
 
@@ -46,6 +55,22 @@ FAQ_MIN_SCORE=0.1
 APP_PORT=8000
 ```
 
+客服工作台相关配置（新增）：
+
+```env
+# JWT 签名密钥，务必修改为随机字符串
+JWT_SECRET=change_this_to_a_random_secret_string
+
+# 首次启动自动创建的管理员账号，登录后请立即修改密码
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change_this_password
+
+# 系统首次启动时的默认模式：auto / manual / collab
+DEFAULT_MODE=auto
+```
+
+> 首次启动会自动在数据库里创建管理员账号（用户名/密码取自上面的环境变量），日志里也会打印一次。数据库文件保存在 `data/qa.db`，`docker-compose.yml` 已挂载该目录为宿主机卷，重启/重新构建容器不会丢失客服账号、模式设置与历史对话。
+
 ## 3) Docker 启动
 
 ```bash
@@ -76,7 +101,26 @@ docker compose down
 docker compose logs -f
 ```
 
-## 4) 本地开发（可选）
+## 4) 客服工作台
+
+访问：
+
+```text
+http://127.0.0.1:8000/agent
+```
+
+用 `.env` 中配置的管理员账号登录（默认 `admin` / 见 `ADMIN_PASSWORD`）。
+
+- **工作模式卡片**（仅管理员可切换）：点击即可在全机器 / 全人工 / 人机协同之间切换，立即生效，无需重启服务。
+- **待处理队列**：全人工/协同模式下的新问题会实时推送到所有在线客服（WebSocket + 5 秒兜底轮询），支持多人同时在线。
+  - 协同模式下，队列条目会显示 AI 生成的建议回复（含匹配度），客服可直接采纳或编辑后发送。
+  - 点击「认领此问题」后，该问题会标记为你在处理，其他客服会看到「客服 X 正在处理中」，避免重复回复。
+  - 「释放认领」可把问题放回待处理队列，交给其他客服处理。
+- **客服账号管理**（仅管理员）：可在工作台内直接创建新的客服/管理员账号。
+
+> 建议登录后立即修改默认管理员密码：可调用 `POST /api/agent/change-password`（`{"old_password":"...","new_password":"..."}`，需携带登录返回的 `token`）。
+
+## 5) 本地开发（可选）
 
 安装依赖：
 
@@ -96,7 +140,7 @@ uvicorn web_app:app --reload --host 127.0.0.1 --port 8000
 python excel_rag_chatbot.py --excel "2026.01.26_肤润康-常见咨询问题_v2(1).xls" --model gpt-4o-mini
 ```
 
-## 5) 参数说明
+## 6) 参数说明
 
 - `--top-k 3`：每次返回的知识条数，默认 3
 - `--min-score 0.1`：最低命中阈值，太低就会拒答并引导补充问题
@@ -110,7 +154,7 @@ python excel_rag_chatbot.py --excel "2026.01.26_肤润康-常见咨询问题_v2(
 - `OPENAI_MODEL`：模型名，默认 `qwen3.6-flash`
 - `OPENAI_BASE_URL`：默认 `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`
 
-## 6) GitHub 自动部署到阿里云 ECS
+## 7) GitHub 自动部署到阿里云 ECS
 
 仓库已包含 `.github/workflows/deploy.yml`。
 
@@ -127,3 +171,5 @@ python excel_rag_chatbot.py --excel "2026.01.26_肤润康-常见咨询问题_v2(
 1. SSH 登录 ECS
 2. `git pull origin main`
 3. `docker compose up -d --build`
+
+> **升级到三种模式后的一次性操作**：由于 `.env` 不会被 `git pull` 更新，首次部署本次更新前，请手动 SSH 登录服务器，在 `~/fuyunhon_cs/.env` 中补充 `JWT_SECRET`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`DEFAULT_MODE`（参考 `.env.example`），保存后再让 GitHub Actions 触发部署，或手动执行一次 `docker compose up -d --build`。同时确保服务器上存在 `~/fuyunhon_cs/data` 目录（`docker-compose.yml` 已配置挂载，用于持久化客服账号与对话数据）。

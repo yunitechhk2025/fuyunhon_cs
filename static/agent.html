@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>肤润康 客服工作台</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        min-height: 100%;
+        background: #f4f6fb;
+        color: #172033;
+        font-family: Arial, "Microsoft YaHei", sans-serif;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 28px;
+        background: linear-gradient(135deg, #2f6fed, #25b8a8);
+        color: #fff;
+      }
+
+      .topbar h1 {
+        margin: 0;
+        font-size: 20px;
+      }
+
+      .topbar .who {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-size: 14px;
+      }
+
+      .topbar button {
+        border: 0;
+        background: rgba(255, 255, 255, 0.2);
+        color: #fff;
+        padding: 8px 14px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+
+      .topbar button:hover {
+        background: rgba(255, 255, 255, 0.32);
+      }
+
+      /* ---------- 登录页 ---------- */
+      #login-view {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+      }
+
+      .login-card {
+        width: 340px;
+        background: #fff;
+        border-radius: 16px;
+        padding: 32px;
+        box-shadow: 0 10px 40px rgba(20, 30, 60, 0.12);
+      }
+
+      .login-card h2 {
+        margin: 0 0 20px;
+        text-align: center;
+        color: #2f6fed;
+      }
+
+      .login-card input {
+        width: 100%;
+        padding: 12px 14px;
+        margin-bottom: 12px;
+        border: 1px solid #d7dfec;
+        border-radius: 10px;
+        font-size: 15px;
+        outline: none;
+      }
+
+      .login-card input:focus {
+        border-color: #2f6fed;
+      }
+
+      .login-card button {
+        width: 100%;
+        padding: 12px;
+        border: 0;
+        border-radius: 10px;
+        background: #2f6fed;
+        color: #fff;
+        font-size: 15px;
+        cursor: pointer;
+      }
+
+      .login-error {
+        color: #e0433d;
+        font-size: 13px;
+        margin-top: 8px;
+        min-height: 18px;
+        text-align: center;
+      }
+
+      /* ---------- 主体 ---------- */
+      #main-view {
+        display: none;
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      .panel {
+        background: #fff;
+        border-radius: 14px;
+        padding: 20px 22px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 14px rgba(20, 30, 60, 0.06);
+      }
+
+      .panel h3 {
+        margin: 0 0 14px;
+        font-size: 16px;
+        color: #172033;
+      }
+
+      .mode-options {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .mode-option {
+        flex: 1;
+        min-width: 160px;
+        border: 2px solid #e3e8f2;
+        border-radius: 12px;
+        padding: 14px;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+
+      .mode-option.active {
+        border-color: #2f6fed;
+        background: #eef3ff;
+      }
+
+      .mode-option.disabled {
+        cursor: default;
+        opacity: 0.7;
+      }
+
+      .mode-option strong {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 14px;
+      }
+
+      .mode-option span {
+        font-size: 12px;
+        color: #6b7686;
+      }
+
+      .queue-empty {
+        text-align: center;
+        color: #94a1b8;
+        padding: 30px 0;
+        font-size: 14px;
+      }
+
+      .queue-item {
+        border: 1px solid #e6eaf2;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 14px;
+      }
+
+      .queue-item .meta {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        color: #94a1b8;
+        margin-bottom: 8px;
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 20px;
+        font-size: 11px;
+        margin-left: 6px;
+      }
+
+      .badge.auto { background: #e6f4ea; color: #1a7d3a; }
+      .badge.manual { background: #fdeaea; color: #c0392b; }
+      .badge.collab { background: #eaf1ff; color: #2f6fed; }
+      .badge.pending { background: #fff4e0; color: #b8860b; }
+      .badge.claimed { background: #eaf1ff; color: #2f6fed; }
+
+      .queue-item .question {
+        font-size: 15px;
+        font-weight: 600;
+        margin-bottom: 10px;
+        line-height: 1.5;
+      }
+
+      .ai-suggestion {
+        background: #f0f7f5;
+        border: 1px dashed #25b8a8;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 13px;
+        color: #22705f;
+        margin-bottom: 10px;
+        white-space: pre-wrap;
+      }
+
+      .ai-suggestion .label {
+        font-weight: 700;
+        margin-bottom: 4px;
+        display: block;
+      }
+
+      .queue-item textarea {
+        width: 100%;
+        min-height: 70px;
+        border: 1px solid #d7dfec;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font: inherit;
+        font-size: 14px;
+        resize: vertical;
+        margin-bottom: 10px;
+      }
+
+      .queue-item .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .btn {
+        border: 0;
+        padding: 9px 16px;
+        border-radius: 9px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      .btn-primary { background: #2f6fed; color: #fff; }
+      .btn-secondary { background: #eef1f7; color: #445; }
+      .btn-danger { background: #fdeaea; color: #c0392b; }
+      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      .claimed-by-other {
+        color: #94a1b8;
+        font-size: 13px;
+        font-style: italic;
+      }
+
+      .agents-list {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 14px;
+        font-size: 13px;
+      }
+
+      .agents-list li {
+        padding: 6px 0;
+        border-bottom: 1px solid #f0f2f7;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .create-agent-form {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .create-agent-form input {
+        flex: 1;
+        min-width: 120px;
+        padding: 9px 10px;
+        border: 1px solid #d7dfec;
+        border-radius: 8px;
+        font-size: 13px;
+      }
+
+      .toast {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #172033;
+        color: #fff;
+        padding: 12px 18px;
+        border-radius: 10px;
+        font-size: 13px;
+        opacity: 0;
+        transform: translateY(-10px);
+        transition: opacity 0.2s, transform 0.2s;
+        z-index: 999;
+      }
+
+      .toast.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .conn-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 6px;
+        background: #ffb020;
+      }
+
+      .conn-dot.online { background: #2ecc71; }
+    </style>
+  </head>
+  <body>
+    <div id="login-view">
+      <div class="login-card">
+        <h2>客服工作台登录</h2>
+        <input id="login-username" type="text" placeholder="用户名" autocomplete="username" />
+        <input id="login-password" type="password" placeholder="密码" autocomplete="current-password" />
+        <button id="login-btn">登录</button>
+        <div class="login-error" id="login-error"></div>
+      </div>
+    </div>
+
+    <div id="main-view">
+      <div class="topbar">
+        <h1>肤润康 客服工作台</h1>
+        <div class="who">
+          <span><span class="conn-dot" id="conn-dot"></span><span id="conn-text">连接中...</span></span>
+          <span id="who-name"></span>
+          <button id="logout-btn">退出登录</button>
+        </div>
+      </div>
+
+      <div id="main-content" style="padding: 0 24px 24px; max-width: 1100px; margin: 0 auto;">
+        <div class="panel" id="mode-panel">
+          <h3>工作模式</h3>
+          <div class="mode-options" id="mode-options"></div>
+        </div>
+
+        <div class="panel">
+          <h3>待处理队列 <span id="queue-count" style="color:#94a1b8; font-weight:normal;"></span></h3>
+          <div id="queue-list"></div>
+        </div>
+
+        <div class="panel" id="admin-panel" style="display: none;">
+          <h3>客服账号管理（管理员）</h3>
+          <ul class="agents-list" id="agents-list"></ul>
+          <div class="create-agent-form">
+            <input id="new-username" placeholder="用户名" />
+            <input id="new-password" placeholder="密码" type="password" />
+            <input id="new-displayname" placeholder="显示名称" />
+            <select id="new-role" style="padding:9px 10px;border:1px solid #d7dfec;border-radius:8px;font-size:13px;">
+              <option value="agent">客服</option>
+              <option value="admin">管理员</option>
+            </select>
+            <button class="btn btn-primary" id="create-agent-btn">新增账号</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+      const TOKEN_KEY = "fuyunhon_agent_token";
+      const AGENT_KEY = "fuyunhon_agent_info";
+
+      const loginView = document.getElementById("login-view");
+      const mainView = document.getElementById("main-view");
+      const loginBtn = document.getElementById("login-btn");
+      const loginError = document.getElementById("login-error");
+      const logoutBtn = document.getElementById("logout-btn");
+      const whoName = document.getElementById("who-name");
+      const queueList = document.getElementById("queue-list");
+      const queueCount = document.getElementById("queue-count");
+      const modeOptions = document.getElementById("mode-options");
+      const adminPanel = document.getElementById("admin-panel");
+      const agentsList = document.getElementById("agents-list");
+      const toastEl = document.getElementById("toast");
+      const connDot = document.getElementById("conn-dot");
+      const connText = document.getElementById("conn-text");
+
+      const MODE_META = {
+        auto: { label: "全机器模式", desc: "AI 自动检索题库并直接回复，无需人工介入" },
+        manual: { label: "全人工模式", desc: "所有问题进入队列，由客服手动回复" },
+        collab: { label: "人机协同模式", desc: "AI 生成建议答案，客服审核后再发送" },
+      };
+
+      let currentAgent = null;
+      let currentToken = null;
+      let currentMode = "auto";
+      let ws = null;
+
+      function showToast(text) {
+        toastEl.textContent = text;
+        toastEl.classList.add("show");
+        setTimeout(() => toastEl.classList.remove("show"), 2500);
+      }
+
+      function authHeaders() {
+        return { Authorization: `Bearer ${currentToken}`, "Content-Type": "application/json" };
+      }
+
+      async function apiFetch(url, options = {}) {
+        const res = await fetch(url, {
+          ...options,
+          headers: { ...authHeaders(), ...(options.headers || {}) },
+        });
+        if (res.status === 401) {
+          logout();
+          throw new Error("登录已过期，请重新登录");
+        }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.detail || "请求失败");
+        }
+        return data;
+      }
+
+      function persistSession(token, agent) {
+        localStorage.setItem(TOKEN_KEY, token);
+        localStorage.setItem(AGENT_KEY, JSON.stringify(agent));
+      }
+
+      function clearSession() {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(AGENT_KEY);
+      }
+
+      function logout() {
+        clearSession();
+        if (ws) ws.close();
+        currentAgent = null;
+        currentToken = null;
+        loginView.style.display = "flex";
+        mainView.style.display = "none";
+      }
+
+      async function login(username, password) {
+        const res = await fetch("/api/agent/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "登录失败");
+        return data;
+      }
+
+      loginBtn.addEventListener("click", async () => {
+        const username = document.getElementById("login-username").value.trim();
+        const password = document.getElementById("login-password").value;
+        loginError.textContent = "";
+        if (!username || !password) {
+          loginError.textContent = "请输入用户名和密码";
+          return;
+        }
+        try {
+          const data = await login(username, password);
+          persistSession(data.token, data.agent);
+          enterApp(data.token, data.agent);
+        } catch (err) {
+          loginError.textContent = err.message;
+        }
+      });
+
+      document.getElementById("login-password").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") loginBtn.click();
+      });
+
+      logoutBtn.addEventListener("click", logout);
+
+      function enterApp(token, agent) {
+        currentToken = token;
+        currentAgent = agent;
+        loginView.style.display = "none";
+        mainView.style.display = "block";
+        whoName.textContent = `${agent.displayName}（${agent.role === "admin" ? "管理员" : "客服"}）`;
+        adminPanel.style.display = agent.role === "admin" ? "block" : "none";
+        refreshMode();
+        refreshQueue();
+        if (agent.role === "admin") refreshAgents();
+        connectWebSocket(token);
+      }
+
+      // ---------------- 模式面板 ----------------
+
+      async function refreshMode() {
+        const data = await apiFetch("/api/mode");
+        currentMode = data.mode;
+        renderModeOptions();
+      }
+
+      function renderModeOptions() {
+        const isAdmin = currentAgent && currentAgent.role === "admin";
+        modeOptions.innerHTML = Object.entries(MODE_META)
+          .map(([key, meta]) => {
+            const active = key === currentMode ? "active" : "";
+            const disabledClass = isAdmin ? "" : "disabled";
+            return `
+              <div class="mode-option ${active} ${disabledClass}" data-mode="${key}">
+                <strong>${meta.label}</strong>
+                <span>${meta.desc}</span>
+              </div>`;
+          })
+          .join("");
+
+        if (isAdmin) {
+          modeOptions.querySelectorAll(".mode-option").forEach((el) => {
+            el.addEventListener("click", async () => {
+              const mode = el.getAttribute("data-mode");
+              if (mode === currentMode) return;
+              try {
+                await apiFetch("/api/mode", { method: "POST", body: JSON.stringify({ mode }) });
+                currentMode = mode;
+                renderModeOptions();
+                showToast(`已切换为：${MODE_META[mode].label}`);
+              } catch (err) {
+                showToast(err.message);
+              }
+            });
+          });
+        }
+      }
+
+      // ---------------- 队列面板 ----------------
+
+      function escapeHtml(str) {
+        const div = document.createElement("div");
+        div.textContent = str;
+        return div.innerHTML;
+      }
+
+      function renderQueueItem(item) {
+        const modeBadge = `<span class="badge ${item.mode_used}">${MODE_META[item.mode_used]?.label || item.mode_used}</span>`;
+        const statusBadge = `<span class="badge ${item.status}">${item.status === "pending" ? "待处理" : "已认领"}</span>`;
+        const time = item.created_at || "";
+
+        const suggestionHtml = item.ai_suggested_answer
+          ? `<div class="ai-suggestion"><span class="label">AI 建议回复（匹配度 ${(item.match_score * 100).toFixed(0)}%）：</span>${escapeHtml(item.ai_suggested_answer)}</div>`
+          : "";
+
+        const isMine = item.claimed_by === currentAgent.id;
+        const isClaimedByOther = item.claimed_by && !isMine;
+
+        let bodyHtml = "";
+        if (isClaimedByOther) {
+          bodyHtml = `<div class="claimed-by-other">客服「${escapeHtml(item.claimed_by_name || "")}」正在处理中...</div>`;
+        } else if (item.status === "pending") {
+          bodyHtml = `
+            ${suggestionHtml}
+            <div class="actions">
+              <button class="btn btn-primary" data-action="claim" data-id="${item.id}">认领此问题</button>
+            </div>`;
+        } else if (isMine) {
+          const prefill = item.ai_suggested_answer || "";
+          bodyHtml = `
+            ${suggestionHtml}
+            <textarea data-answer-input="${item.id}" placeholder="输入回复内容...">${escapeHtml(prefill)}</textarea>
+            <div class="actions">
+              <button class="btn btn-primary" data-action="answer" data-id="${item.id}">发送回复</button>
+              <button class="btn btn-secondary" data-action="release" data-id="${item.id}">释放认领</button>
+            </div>`;
+        }
+
+        return `
+          <div class="queue-item" data-item-id="${item.id}">
+            <div class="meta">
+              <span>#${item.id} · ${time}</span>
+              <span>${modeBadge}${statusBadge}</span>
+            </div>
+            <div class="question">${escapeHtml(item.question)}</div>
+            ${bodyHtml}
+          </div>`;
+      }
+
+      function renderQueue(items) {
+        queueCount.textContent = items.length ? `(${items.length})` : "";
+        if (items.length === 0) {
+          queueList.innerHTML = `<div class="queue-empty">暂无待处理问题</div>`;
+          return;
+        }
+        queueList.innerHTML = items.map(renderQueueItem).join("");
+
+        queueList.querySelectorAll("[data-action]").forEach((btn) => {
+          const id = btn.getAttribute("data-id");
+          const action = btn.getAttribute("data-action");
+          btn.addEventListener("click", async () => {
+            try {
+              if (action === "claim") {
+                await apiFetch(`/api/agent/claim/${id}`, { method: "POST" });
+              } else if (action === "release") {
+                await apiFetch(`/api/agent/release/${id}`, { method: "POST" });
+              } else if (action === "answer") {
+                const textarea = document.querySelector(`[data-answer-input="${id}"]`);
+                const answer = textarea.value.trim();
+                if (!answer) {
+                  showToast("请输入回复内容");
+                  return;
+                }
+                await apiFetch(`/api/agent/answer/${id}`, {
+                  method: "POST",
+                  body: JSON.stringify({ answer }),
+                });
+                showToast("回复已发送");
+              }
+              refreshQueue();
+            } catch (err) {
+              showToast(err.message);
+            }
+          });
+        });
+      }
+
+      async function refreshQueue() {
+        try {
+          const data = await apiFetch("/api/agent/queue");
+          renderQueue(data.items);
+        } catch (err) {
+          // 忽略瞬时错误，等待下一次轮询/推送
+        }
+      }
+
+      // ---------------- 管理员：客服账号 ----------------
+
+      async function refreshAgents() {
+        try {
+          const data = await apiFetch("/api/agent/agents");
+          agentsList.innerHTML = data.agents
+            .map(
+              (a) =>
+                `<li><span>${escapeHtml(a.display_name)} (${escapeHtml(a.username)})</span><span>${a.role === "admin" ? "管理员" : "客服"}</span></li>`
+            )
+            .join("");
+        } catch (err) {
+          // ignore
+        }
+      }
+
+      document.getElementById("create-agent-btn").addEventListener("click", async () => {
+        const username = document.getElementById("new-username").value.trim();
+        const password = document.getElementById("new-password").value;
+        const displayName = document.getElementById("new-displayname").value.trim();
+        const role = document.getElementById("new-role").value;
+        if (!username || !password || !displayName) {
+          showToast("请填写完整信息");
+          return;
+        }
+        try {
+          await apiFetch("/api/agent/agents", {
+            method: "POST",
+            body: JSON.stringify({ username, password, display_name: displayName, role }),
+          });
+          showToast("账号创建成功");
+          document.getElementById("new-username").value = "";
+          document.getElementById("new-password").value = "";
+          document.getElementById("new-displayname").value = "";
+          refreshAgents();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+
+      // ---------------- WebSocket 实时推送 ----------------
+
+      function connectWebSocket(token) {
+        const protocol = location.protocol === "https:" ? "wss" : "ws";
+        ws = new WebSocket(`${protocol}://${location.host}/ws/agent?token=${encodeURIComponent(token)}`);
+
+        ws.onopen = () => {
+          connDot.classList.add("online");
+          connText.textContent = "实时连接";
+        };
+        ws.onclose = () => {
+          connDot.classList.remove("online");
+          connText.textContent = "已断开，正在重连...";
+          setTimeout(() => {
+            if (currentToken) connectWebSocket(currentToken);
+          }, 3000);
+        };
+        ws.onerror = () => {
+          connDot.classList.remove("online");
+        };
+        ws.onmessage = () => {
+          refreshQueue();
+        };
+      }
+
+      // 兜底轮询，防止 WebSocket 断连时队列不刷新
+      setInterval(() => {
+        if (currentToken) refreshQueue();
+      }, 5000);
+
+      // ---------------- 自动恢复登录态 ----------------
+
+      (function restoreSession() {
+        const token = localStorage.getItem(TOKEN_KEY);
+        const agentRaw = localStorage.getItem(AGENT_KEY);
+        if (token && agentRaw) {
+          try {
+            enterApp(token, JSON.parse(agentRaw));
+          } catch (err) {
+            clearSession();
+          }
+        }
+      })();
+    </script>
+  </body>
+</html>
