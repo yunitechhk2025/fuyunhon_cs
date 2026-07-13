@@ -2,7 +2,7 @@ import os
 import sys
 import uuid
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 import database
 from auth import create_token, decode_token, get_current_agent, require_admin
-from excel_rag_chatbot import ExcelFaqRagBot
+from excel_rag_chatbot import AnswerResult, ExcelFaqRagBot
 from ws_manager import manager
 
 DEFAULT_EXCEL = "2026.01.26_肤润康-常见咨询问题_v2(1).xls"
@@ -101,16 +101,26 @@ def _ai_model(model: Optional[str]) -> str:
     return model or os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
 
 
-def _generate_ai_reply(question: str, model: Optional[str]) -> Tuple[str, float]:
-    ranked = bot.retrieve(question)
-    score = ranked[0][0] if ranked else 0.0
-    reply = bot.answer(
+def _generate_ai_reply(question: str, model: Optional[str]) -> AnswerResult:
+    return bot.answer(
         question,
         model=_ai_model(model),
         base_url=os.getenv("OPENAI_BASE_URL"),
         api_key=os.getenv("OPENAI_API_KEY"),
     )
-    return reply, score
+
+
+def _log_retrieval_only(conversation_id: int, question: str) -> None:
+    """全人工模式下不调用 AI，但仍在后台记录题库检索结果，便于复核。"""
+    try:
+        ranked = bot.retrieve(question)
+        if ranked and ranked[0][0] >= bot.min_score:
+            score, item = ranked[0]
+            database.set_retrieval_info(conversation_id, True, item.question, item.answer, score)
+        else:
+            database.set_retrieval_info(conversation_id, False, None, None, ranked[0][0] if ranked else 0.0)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] 检索标注失败: {exc}", file=sys.stderr)
 
 
 # ---------------- 模式设置 ----------------
@@ -143,7 +153,11 @@ async def ask(req: AskRequest) -> AskResponse:
 
     if mode == "auto":
         try:
-            reply, _score = _generate_ai_reply(question, req.model)
+            result = _generate_ai_reply(question, req.model)
+            reply = result.text
+            database.set_retrieval_info(
+                conversation_id, result.matched, result.matched_question, result.matched_answer, result.score
+            )
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] 全机器模式生成回复失败: {exc}", file=sys.stderr)
             reply = "抱歉，暂时无法生成回复，请稍后再试或联系人工客服。"
@@ -153,10 +167,15 @@ async def ask(req: AskRequest) -> AskResponse:
     # manual / collab：不直接回复客户，进入人工队列
     if mode == "collab":
         try:
-            suggestion, score = _generate_ai_reply(question, req.model)
-            database.set_ai_suggestion(conversation_id, suggestion, score)
+            result = _generate_ai_reply(question, req.model)
+            database.set_ai_suggestion(conversation_id, result.text, result.score)
+            database.set_retrieval_info(
+                conversation_id, result.matched, result.matched_question, result.matched_answer, result.score
+            )
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] 协同模式生成AI建议失败: {exc}", file=sys.stderr)
+    elif mode == "manual":
+        _log_retrieval_only(conversation_id, question)
 
     conversation = database.get_conversation(conversation_id)
     await manager.broadcast({"type": "new_question", "conversation": dict(conversation)})

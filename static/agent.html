@@ -228,6 +228,33 @@
         display: block;
       }
 
+      .retrieval-info {
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 12px;
+        margin-bottom: 10px;
+        white-space: pre-wrap;
+        line-height: 1.5;
+      }
+
+      .retrieval-info.hit {
+        background: #f5f8ff;
+        border: 1px dashed #94a9d8;
+        color: #3a4a72;
+      }
+
+      .retrieval-info.miss {
+        background: #fff7f2;
+        border: 1px dashed #e0a26b;
+        color: #8a5a2e;
+      }
+
+      .retrieval-info .label {
+        font-weight: 700;
+        margin-bottom: 4px;
+        display: block;
+      }
+
       .queue-item textarea {
         width: 100%;
         min-height: 70px;
@@ -556,14 +583,32 @@
           ? `<div class="ai-suggestion"><span class="label">AI 建议回复（匹配度 ${(item.match_score * 100).toFixed(0)}%）：</span>${escapeHtml(item.ai_suggested_answer)}</div>`
           : "";
 
+        let retrievalHtml = "";
+        if (item.matched === 1) {
+          const scoreText = typeof item.match_score === "number" ? `${(item.match_score * 100).toFixed(0)}%` : "-";
+          retrievalHtml = `
+            <div class="retrieval-info hit">
+              <span class="label">题库检索标注：命中（匹配度 ${scoreText}）</span>
+              问题：${escapeHtml(item.matched_question || "")}
+              答案：${escapeHtml(item.matched_answer || "")}
+            </div>`;
+        } else if (item.matched === 0) {
+          retrievalHtml = `
+            <div class="retrieval-info miss">
+              <span class="label">题库检索标注：未检索到匹配问题</span>
+              题库中暂无对应说明，请客服根据实际情况人工回复，或补充题库后重新检索。
+            </div>`;
+        }
+
         const isMine = item.claimed_by === currentAgent.id;
         const isClaimedByOther = item.claimed_by && !isMine;
 
         let bodyHtml = "";
         if (isClaimedByOther) {
-          bodyHtml = `<div class="claimed-by-other">客服「${escapeHtml(item.claimed_by_name || "")}」正在处理中...</div>`;
+          bodyHtml = `${retrievalHtml}<div class="claimed-by-other">客服「${escapeHtml(item.claimed_by_name || "")}」正在处理中...</div>`;
         } else if (item.status === "pending") {
           bodyHtml = `
+            ${retrievalHtml}
             ${suggestionHtml}
             <div class="actions">
               <button class="btn btn-primary" data-action="claim" data-id="${item.id}">认领此问题</button>
@@ -571,6 +616,7 @@
         } else if (isMine) {
           const prefill = item.ai_suggested_answer || "";
           bodyHtml = `
+            ${retrievalHtml}
             ${suggestionHtml}
             <textarea data-answer-input="${item.id}" placeholder="输入回复内容...">${escapeHtml(prefill)}</textarea>
             <div class="actions">

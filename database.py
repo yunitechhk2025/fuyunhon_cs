@@ -26,6 +26,12 @@ def get_conn():
         conn.close()
 
 
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, coltype: str) -> None:
+    existing = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+
+
 def init_db() -> None:
     with get_conn() as conn:
         conn.executescript(
@@ -65,6 +71,11 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_conversations_session ON conversations(session_id);
             """
         )
+
+        # 兼容已部署的旧数据库：补充检索标注字段（是否命中/命中的题库问题与答案）
+        _add_column_if_missing(conn, "conversations", "matched", "INTEGER")
+        _add_column_if_missing(conn, "conversations", "matched_question", "TEXT")
+        _add_column_if_missing(conn, "conversations", "matched_answer", "TEXT")
 
         row = conn.execute("SELECT value FROM settings WHERE key = 'global_mode'").fetchone()
         if row is None:
@@ -159,6 +170,26 @@ def create_conversation(session_id: str, question: str, mode_used: str) -> int:
             (session_id, question, mode_used),
         )
         return cur.lastrowid
+
+
+def set_retrieval_info(
+    conversation_id: int,
+    matched: bool,
+    matched_question: Optional[str],
+    matched_answer: Optional[str],
+    score: float,
+) -> None:
+    """记录本次提问在题库中的检索结果：命中的问题/答案，或未命中。"""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE conversations
+            SET matched = ?, matched_question = ?, matched_answer = ?, match_score = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (1 if matched else 0, matched_question, matched_answer, score, conversation_id),
+        )
 
 
 def set_ai_suggestion(conversation_id: int, suggestion: str, score: float) -> None:

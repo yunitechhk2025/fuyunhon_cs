@@ -22,6 +22,15 @@ class FaqItem:
         return f"{prefix}问题: {self.question} | 回答: {self.answer}"
 
 
+@dataclass
+class AnswerResult:
+    text: str
+    matched: bool
+    score: float
+    matched_question: Optional[str] = None
+    matched_answer: Optional[str] = None
+
+
 class ExcelFaqRagBot:
     def __init__(self, excel_path: str, top_k: int = 5, min_score: float = 0.05) -> None:
         self.excel_path = excel_path
@@ -127,60 +136,36 @@ class ExcelFaqRagBot:
         )
         return ranked[: self.top_k]
 
-    def _render_source_block(self, ranked: Sequence[Tuple[float, FaqItem]]) -> str:
-        lines = []
-        for i, (score, item) in enumerate(ranked, start=1):
-            lines.append(
-                (
-                    f"[{i}] score={score:.3f} | sheet={item.sheet} | row={item.row_index}\n"
-                    f"问题：{item.question}\n"
-                    f"回答：{item.answer}"
-                )
-            )
-        return "\n\n".join(lines)
-
-    def _grounded_fallback_answer(self, ranked: Sequence[Tuple[float, FaqItem]]) -> str:
-        best_score, best_item = ranked[0]
-        if best_score < self.min_score:
-            return (
-                "亲，这个问题题库里暂时没有完全对应的说明。"
-                "你可以再补充一下具体场景，比如：孕妇/备孕、敏感肌、使用顺序、搭配禁忌、见效周期，我再帮你查。"
-            )
-
+    def _not_found_text(self) -> str:
         return (
-            f"亲，关于“{best_item.question}”，根据题库说明：\n"
-            f"{best_item.answer}"
+            "亲，这个问题题库里暂时没有完全对应的说明。"
+            "你可以再补充一下具体场景，比如：孕妇/备孕、敏感肌、使用顺序、搭配禁忌、见效周期，我再帮你查。"
         )
 
-    def _call_ai(
+    def _call_ai_greeting(
         self,
         user_query: str,
-        ranked: Sequence[Tuple[float, FaqItem]],
+        item: FaqItem,
         model: str,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
     ) -> str:
+        """只让 AI 生成一句开场白/过渡语，绝不让 AI 生成或复述专业内容本身，
+        从而保证题库答案在最终回复里是逐字原文拼接，而不是"AI 抄写"的结果。"""
         try:
             from openai import OpenAI
         except ImportError as exc:
             raise RuntimeError("未安装 openai 依赖，请执行: pip install openai") from exc
 
-        sources = self._render_source_block(ranked)
         system_prompt = (
-            "你是“肤润康”电商客服助手。你只能依据给定题库片段回答，禁止使用外部知识。\n"
-            "要求：\n"
-            "1. 直接给客户可读的最终回复，不要输出分析过程。\n"
-            "2. 可以在开头或结尾加一句亲切口语化的问候/过渡语，使回复更自然，像真人客服。\n"
-            "3. 专业内容部分（成分、功效、用法用量、禁忌、注意事项等具体表述）必须完全逐字采用题库原文，"
-            "禁止改写、精简、替换措辞、调整语序或增删信息，一字不差地照抄题库答案。\n"
-            "4. 如果题库无法支持结论，明确说题库暂未覆盖，并引导补充关键词。\n"
-            "5. 不要暴露分数、sheet、row、API、错误码等技术信息。"
+            "你是电商客服助手。你唯一的任务是生成一句简短、亲切、口语化的开场白/过渡语（不超过20个字），"
+            "用来引出接下来即将原文展示的官方说明。\n"
+            "严格要求：\n"
+            "1. 只输出这一句话本身，不要加任何解释、引号或多余文本。\n"
+            "2. 禁止提及、复述、总结或猜测任何成分、功效、用法用量、禁忌等专业内容，那部分会原文附加在你的话后面。\n"
+            "3. 不要编造信息，不要暴露分数、sheet、row 等技术信息。"
         )
-        user_prompt = (
-            f"客户问题：{user_query}\n\n"
-            f"题库检索结果：\n{sources}\n\n"
-            "请直接输出最终客服回复文本，专业内容部分请逐字照抄题库答案，不要改写。"
-        )
+        user_prompt = f"客户问题：{user_query}\n针对问题“{item.question}”，请生成一句自然的开场白。"
 
         client = OpenAI(
             api_key=api_key or os.getenv("OPENAI_API_KEY", "EMPTY"),
@@ -188,7 +173,7 @@ class ExcelFaqRagBot:
         )
         resp = client.chat.completions.create(
             model=model,
-            temperature=0.1,
+            temperature=0.3,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -202,27 +187,39 @@ class ExcelFaqRagBot:
         model: str = "qwen3.6-flash",
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
-    ) -> str:
+    ) -> AnswerResult:
         ranked = self.retrieve(user_query)
         if not ranked:
-            return "抱歉，题库为空或尚未建立索引。"
+            return AnswerResult(text="抱歉，题库为空或尚未建立索引。", matched=False, score=0.0)
 
+        best_score, best_item = ranked[0]
+        if best_score < self.min_score:
+            return AnswerResult(text=self._not_found_text(), matched=False, score=best_score)
+
+        greeting = ""
         try:
-            ai_reply = self._call_ai(
+            greeting = self._call_ai_greeting(
                 user_query=user_query,
-                ranked=ranked,
+                item=best_item,
                 model=model,
                 base_url=base_url,
                 api_key=api_key,
             )
-            if ai_reply:
-                return ai_reply
         except Exception as exc:  # noqa: BLE001
-            # 不把技术错误暴露给前端用户
-            print(f"[warn] AI 调用失败，已切换题库直出: {exc}", file=sys.stderr)
-            return self._grounded_fallback_answer(ranked)
+            print(f"[warn] AI 开场白生成失败，使用默认问候语: {exc}", file=sys.stderr)
 
-        return self._grounded_fallback_answer(ranked)
+        if not greeting:
+            greeting = "亲，为您查询到以下官方说明："
+
+        # 专业内容始终是题库原文的直接拼接，不经过 AI 改写，确保逐字一致
+        text = f"{greeting}\n{best_item.answer}"
+        return AnswerResult(
+            text=text,
+            matched=True,
+            score=best_score,
+            matched_question=best_item.question,
+            matched_answer=best_item.answer,
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -264,7 +261,9 @@ def main() -> None:
     if args.self_test:
         sample_q = "孕妇能用吗"
         print(f"\n[自测问题] {sample_q}")
-        print(bot.answer(sample_q, model=args.model, base_url=args.base_url, api_key=args.api_key))
+        result = bot.answer(sample_q, model=args.model, base_url=args.base_url, api_key=args.api_key)
+        print(result.text)
+        print(f"\n[检索标注] matched={result.matched} score={result.score:.3f} matched_question={result.matched_question!r}")
         return
 
     print("客服机器人已启动。输入 exit 退出。")
@@ -276,13 +275,14 @@ def main() -> None:
             print("机器人: 已退出。")
             break
 
-        reply = bot.answer(
+        result = bot.answer(
             user_input,
             model=args.model,
             base_url=args.base_url,
             api_key=args.api_key,
         )
-        print(f"\n机器人:\n{reply}")
+        print(f"\n机器人:\n{result.text}")
+        print(f"[检索标注] matched={result.matched} score={result.score:.3f} matched_question={result.matched_question!r}")
 
 
 if __name__ == "__main__":
