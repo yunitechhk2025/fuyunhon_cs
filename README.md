@@ -50,7 +50,7 @@ OPENAI_BASE_URL=https://你的兼容接口/v1
 
 ```env
 OPENAI_MODEL=gpt-4o-mini
-FAQ_TOP_K=5
+FAQ_TOP_K=8
 FAQ_MIN_SCORE=0.1
 APP_PORT=8000
 ```
@@ -142,6 +142,13 @@ python excel_rag_chatbot.py --excel "2026.01.26_肤润康-常见咨询问题_v2(
 
 ## 6) 参数说明
 
+**回答机制**：每次提问先用关键词检索（TF-IDF）捞出 `top-k` 条候选题库问题，再交给 AI
+在候选中做语义判断——即使客户的措辞、语序、同义表达与题库原文不同，只要意图相同即可命中。
+命中后，AI 只生成一句开场白/过渡语，专业内容（成分、功效、用法用量、禁忌等）始终是题库
+答案原文的直接拼接，不经过 AI 改写，确保逐字一致。如果 AI 判断所有候选都不匹配，或调用失败
+兜底走关键词分数判断，会返回引导客户补充关键词的话术。每次提问的检索结果（命中的题库问题/
+答案，或未命中）都会记录在后台，客服工作台的问题卡片上会显示「题库检索标注」供人工核对。
+
 - `--top-k 3`：每次返回的知识条数，默认 3
 - `--min-score 0.1`：最低命中阈值，太低就会拒答并引导补充问题
 - `--self-test`：跑一次样例问答后退出，便于快速验收
@@ -149,8 +156,8 @@ python excel_rag_chatbot.py --excel "2026.01.26_肤润康-常见咨询问题_v2(
 网页版本也支持这些环境变量：
 
 - `FAQ_EXCEL_PATH`：Excel 路径，默认读取当前目录的肤润康题库
-- `FAQ_TOP_K`：检索候选条数，默认 5
-- `FAQ_MIN_SCORE`：最低命中阈值，默认 0.1
+- `FAQ_TOP_K`：检索候选条数（供 AI 做语义匹配的候选池大小），默认 8
+- `FAQ_MIN_SCORE`：AI 语义匹配调用失败时，兜底关键词检索所用的最低命中阈值，默认 0.1
 - `OPENAI_MODEL`：模型名，默认 `qwen3.6-flash`
 - `OPENAI_BASE_URL`：默认 `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`
 

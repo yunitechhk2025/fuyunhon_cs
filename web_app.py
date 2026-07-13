@@ -71,7 +71,7 @@ STATIC_DIR = BASE_DIR / "static"
 
 bot = ExcelFaqRagBot(
     excel_path=os.getenv("FAQ_EXCEL_PATH", str(BASE_DIR / DEFAULT_EXCEL)),
-    top_k=int(os.getenv("FAQ_TOP_K", "5")),
+    top_k=int(os.getenv("FAQ_TOP_K", "8")),
     min_score=float(os.getenv("FAQ_MIN_SCORE", "0.1")),
 )
 

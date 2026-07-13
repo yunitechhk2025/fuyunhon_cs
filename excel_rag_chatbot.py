@@ -1,5 +1,7 @@
 import argparse
+import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
@@ -142,30 +144,39 @@ class ExcelFaqRagBot:
             "你可以再补充一下具体场景，比如：孕妇/备孕、敏感肌、使用顺序、搭配禁忌、见效周期，我再帮你查。"
         )
 
-    def _call_ai_greeting(
+    def _call_ai_match(
         self,
         user_query: str,
-        item: FaqItem,
+        ranked: Sequence[Tuple[float, FaqItem]],
         model: str,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
-    ) -> str:
-        """只让 AI 生成一句开场白/过渡语，绝不让 AI 生成或复述专业内容本身，
-        从而保证题库答案在最终回复里是逐字原文拼接，而不是"AI 抄写"的结果。"""
+    ) -> Tuple[int, str]:
+        """让 AI 在关键词检索出的候选题库问题中做语义匹配（允许措辞、语序、同义表达不同，
+        只要客户意图与某条候选实质相同即可），并生成引出官方说明的开场白。
+        绝不让 AI 生成或复述专业内容本身，专业内容始终由调用方原文拼接，确保逐字一致。
+
+        返回 (候选序号, 开场白)；序号为 0 表示 AI 判断所有候选都不匹配。
+        """
         try:
             from openai import OpenAI
         except ImportError as exc:
             raise RuntimeError("未安装 openai 依赖，请执行: pip install openai") from exc
 
+        candidates = "\n".join(f"{i}. {item.question}" for i, (_, item) in enumerate(ranked, start=1))
         system_prompt = (
-            "你是电商客服助手。你唯一的任务是生成一句简短、亲切、口语化的开场白/过渡语（不超过20个字），"
-            "用来引出接下来即将原文展示的官方说明。\n"
-            "严格要求：\n"
-            "1. 只输出这一句话本身，不要加任何解释、引号或多余文本。\n"
-            "2. 禁止提及、复述、总结或猜测任何成分、功效、用法用量、禁忌等专业内容，那部分会原文附加在你的话后面。\n"
-            "3. 不要编造信息，不要暴露分数、sheet、row 等技术信息。"
+            "你是电商客服助手的题库匹配模块，只能依据候选题库问题做判断，禁止使用外部知识回答专业内容。\n"
+            "任务：\n"
+            "1. 判断客户问题在意图上最匹配下面哪一条候选题库问题——即使措辞、语序、同义表达不同，"
+            "只要客户实际想问的事情和某条候选实质相同，就算匹配。\n"
+            "2. 如果确实匹配到某一条，生成一句简短亲切、口语化的开场白/过渡语（不超过20个字），"
+            "用于引出接下来将原文展示的官方说明；开场白中严禁提及、复述或猜测任何成分、功效、用法用量、"
+            "禁忌等专业内容，那部分会在开场白之后原文附加，不需要你生成。\n"
+            "3. 如果没有任何一条候选真正匹配客户的意图，index 填 0，greeting 填空字符串。\n"
+            "4. 只输出如下格式的 JSON，不要输出任何多余文字、解释或代码块标记：\n"
+            '{"index": 数字, "greeting": "字符串"}'
         )
-        user_prompt = f"客户问题：{user_query}\n针对问题“{item.question}”，请生成一句自然的开场白。"
+        user_prompt = f"客户问题：{user_query}\n\n候选题库问题：\n{candidates}"
 
         client = OpenAI(
             api_key=api_key or os.getenv("OPENAI_API_KEY", "EMPTY"),
@@ -173,13 +184,28 @@ class ExcelFaqRagBot:
         )
         resp = client.chat.completions.create(
             model=model,
-            temperature=0.3,
+            temperature=0.1,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
         )
-        return (resp.choices[0].message.content or "").strip()
+        raw = (resp.choices[0].message.content or "").strip()
+
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            return 0, ""
+        try:
+            payload = json.loads(match.group())
+        except json.JSONDecodeError:
+            return 0, ""
+
+        try:
+            idx = int(payload.get("index", 0) or 0)
+        except (TypeError, ValueError):
+            idx = 0
+        greeting = str(payload.get("greeting", "") or "").strip()
+        return idx, greeting
 
     def answer(
         self,
@@ -192,27 +218,42 @@ class ExcelFaqRagBot:
         if not ranked:
             return AnswerResult(text="抱歉，题库为空或尚未建立索引。", matched=False, score=0.0)
 
-        best_score, best_item = ranked[0]
-        if best_score < self.min_score:
-            return AnswerResult(text=self._not_found_text(), matched=False, score=best_score)
-
-        greeting = ""
+        selection: Optional[Tuple[int, str]] = None
         try:
-            greeting = self._call_ai_greeting(
+            # 始终把候选交给 AI 做语义判断，不因关键词分数偏低而提前拒判，
+            # 这样措辞不同但意思相同的相似问题也能命中题库答案。
+            selection = self._call_ai_match(
                 user_query=user_query,
-                item=best_item,
+                ranked=ranked,
                 model=model,
                 base_url=base_url,
                 api_key=api_key,
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"[warn] AI 开场白生成失败，使用默认问候语: {exc}", file=sys.stderr)
+            print(f"[warn] AI 语义匹配失败，已回退到关键词检索结果: {exc}", file=sys.stderr)
 
-        if not greeting:
-            greeting = "亲，为您查询到以下官方说明："
+        if selection is not None:
+            idx, greeting = selection
+            if idx and 1 <= idx <= len(ranked):
+                score, item = ranked[idx - 1]
+                if not greeting:
+                    greeting = "亲，为您查询到以下官方说明："
+                # 专业内容始终是题库原文的直接拼接，不经过 AI 改写，确保逐字一致
+                text = f"{greeting}\n{item.answer}"
+                return AnswerResult(
+                    text=text,
+                    matched=True,
+                    score=score,
+                    matched_question=item.question,
+                    matched_answer=item.answer,
+                )
+            return AnswerResult(text=self._not_found_text(), matched=False, score=ranked[0][0])
 
-        # 专业内容始终是题库原文的直接拼接，不经过 AI 改写，确保逐字一致
-        text = f"{greeting}\n{best_item.answer}"
+        # AI 调用异常时的兜底：仅依赖关键词检索分数
+        best_score, best_item = ranked[0]
+        if best_score < self.min_score:
+            return AnswerResult(text=self._not_found_text(), matched=False, score=best_score)
+        text = f"亲，为您查询到以下官方说明：\n{best_item.answer}"
         return AnswerResult(
             text=text,
             matched=True,
