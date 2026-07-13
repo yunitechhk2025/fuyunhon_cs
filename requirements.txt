@@ -1,6 +1,7 @@
 pandas
 openpyxl
 scikit-learn
+numpy
 xlrd
 openai
 fastapi

@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
+import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -43,6 +44,10 @@ class ExcelFaqRagBot:
         # 中文 FAQ 场景，字符 n-gram 检索更稳（无需分词）
         self.vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 4), min_df=1)
         self.doc_vectors = None
+
+        # 语义向量检索：弥补字符检索对口语化/同义改写问句（如“涨豆豆” vs “长痘”）召回不足的问题
+        self.embed_model = os.getenv("FAQ_EMBED_MODEL", "text-embedding-v3")
+        self.item_embeddings: Optional[np.ndarray] = None
 
     def _find_header_row(
         self, df: pd.DataFrame, question_key: str = "咨询问题", answer_key: str = "解答"
@@ -114,13 +119,77 @@ class ExcelFaqRagBot:
         # 问题权重更高，回答作为补充，提升短问命中率
         corpus = [f"{it.question} {it.question} {it.answer}" for it in self.items]
         self.doc_vectors = self.vectorizer.fit_transform(corpus)
+        self._build_semantic_index()
 
-    def retrieve(self, user_query: str) -> List[Tuple[float, FaqItem]]:
+    def _get_ai_client(self, base_url: Optional[str] = None, api_key: Optional[str] = None):
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise RuntimeError("未安装 openai 依赖，请执行: pip install openai") from exc
+
+        return OpenAI(
+            api_key=api_key or os.getenv("OPENAI_API_KEY", "EMPTY"),
+            base_url=base_url or os.getenv("OPENAI_BASE_URL"),
+            timeout=30.0,
+            max_retries=2,
+        )
+
+    def _build_semantic_index(self, batch_size: int = 10, attempts: int = 3) -> None:
+        """为所有题库问题计算一次语义向量，用于弥补字符检索对同义/口语化改写问句的召回不足。
+        DashScope 的 embedding 接口单次请求最多支持 10 条文本，因此分批调用。
+        这是启动时的一次性操作，遇到瞬时网络抖动时值得多试几次；
+        全部失败时静默降级为纯关键词检索，不影响其余功能。"""
+        self.item_embeddings = None
+        texts = [it.question for it in self.items]
+
+        for attempt in range(1, attempts + 1):
+            try:
+                client = self._get_ai_client()
+                all_vectors: List[List[float]] = []
+                for i in range(0, len(texts), batch_size):
+                    batch = texts[i : i + batch_size]
+                    resp = client.embeddings.create(model=self.embed_model, input=batch)
+                    all_vectors.extend(d.embedding for d in resp.data)
+                vectors = np.array(all_vectors, dtype="float32")
+                norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+                norms[norms == 0] = 1.0
+                self.item_embeddings = vectors / norms
+                return
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"[warn] 语义向量索引构建失败（第 {attempt}/{attempts} 次尝试）: {exc}",
+                    file=sys.stderr,
+                )
+
+        print("[warn] 语义向量索引最终构建失败，将仅使用关键词检索。", file=sys.stderr)
+        self.item_embeddings = None
+
+    def _semantic_scores(
+        self, user_query: str, base_url: Optional[str] = None, api_key: Optional[str] = None
+    ) -> Optional[np.ndarray]:
+        if self.item_embeddings is None:
+            return None
+        try:
+            client = self._get_ai_client(base_url=base_url, api_key=api_key)
+            resp = client.embeddings.create(model=self.embed_model, input=[user_query])
+            q_vec = np.array(resp.data[0].embedding, dtype="float32")
+            norm = np.linalg.norm(q_vec)
+            if norm == 0:
+                return None
+            q_vec = q_vec / norm
+            return self.item_embeddings @ q_vec
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] 语义检索调用失败，本次仅使用关键词检索: {exc}", file=sys.stderr)
+            return None
+
+    def retrieve(
+        self, user_query: str, base_url: Optional[str] = None, api_key: Optional[str] = None
+    ) -> List[Tuple[float, FaqItem]]:
         if self.doc_vectors is None:
             raise RuntimeError("索引尚未构建，请先执行 build_index()。")
 
         q_vec = self.vectorizer.transform([user_query])
-        scores = cosine_similarity(q_vec, self.doc_vectors)[0]
+        lexical_scores = cosine_similarity(q_vec, self.doc_vectors)[0]
 
         # 额外叠加关键词重合分，避免纯 TF-IDF 对短中文问句过严
         query_chars = set(user_query.replace(" ", ""))
@@ -129,14 +198,33 @@ class ExcelFaqRagBot:
             if not query_chars or not q_chars:
                 continue
             overlap = len(query_chars & q_chars) / max(len(query_chars), 1)
-            scores[i] = float(scores[i]) + 0.25 * overlap
+            lexical_scores[i] = float(lexical_scores[i]) + 0.25 * overlap
+
+        semantic_scores = self._semantic_scores(user_query, base_url=base_url, api_key=api_key)
+
+        # 分别取关键词检索和语义检索各自的 top-k，取并集作为候选池：
+        # 关键词检索命中字面/关键词重合明显的问题；语义检索能召回“涨豆豆”vs“长痘”这类
+        # 字符完全不重合但意思相同的口语化改写问题。二者互补，交给后续 AI 语义判断做最终裁决。
+        n = len(self.items)
+        k = min(self.top_k, n)
+        lexical_top_idx = sorted(range(n), key=lambda i: lexical_scores[i], reverse=True)[:k]
+        candidate_idx = set(lexical_top_idx)
+        if semantic_scores is not None:
+            semantic_top_idx = sorted(range(n), key=lambda i: semantic_scores[i], reverse=True)[:k]
+            candidate_idx.update(semantic_top_idx)
+
+        def combined_score(i: int) -> float:
+            score = float(lexical_scores[i])
+            if semantic_scores is not None:
+                score = max(score, float(semantic_scores[i]))
+            return score
 
         ranked = sorted(
-            [(float(score), self.items[i]) for i, score in enumerate(scores)],
+            [(combined_score(i), self.items[i]) for i in candidate_idx],
             key=lambda x: x[0],
             reverse=True,
         )
-        return ranked[: self.top_k]
+        return ranked
 
     def _not_found_text(self) -> str:
         return (
@@ -158,11 +246,6 @@ class ExcelFaqRagBot:
 
         返回 (候选序号, 开场白)；序号为 0 表示 AI 判断所有候选都不匹配。
         """
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise RuntimeError("未安装 openai 依赖，请执行: pip install openai") from exc
-
         candidates = "\n".join(f"{i}. {item.question}" for i, (_, item) in enumerate(ranked, start=1))
         system_prompt = (
             "你是电商客服助手的题库匹配模块，只能依据候选题库问题做判断，禁止使用外部知识回答专业内容。\n"
@@ -178,10 +261,7 @@ class ExcelFaqRagBot:
         )
         user_prompt = f"客户问题：{user_query}\n\n候选题库问题：\n{candidates}"
 
-        client = OpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY", "EMPTY"),
-            base_url=base_url or os.getenv("OPENAI_BASE_URL"),
-        )
+        client = self._get_ai_client(base_url=base_url, api_key=api_key)
         resp = client.chat.completions.create(
             model=model,
             temperature=0.1,
@@ -214,7 +294,7 @@ class ExcelFaqRagBot:
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
     ) -> AnswerResult:
-        ranked = self.retrieve(user_query)
+        ranked = self.retrieve(user_query, base_url=base_url, api_key=api_key)
         if not ranked:
             return AnswerResult(text="抱歉，题库为空或尚未建立索引。", matched=False, score=0.0)
 
