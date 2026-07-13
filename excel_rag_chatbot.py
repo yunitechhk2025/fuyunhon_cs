@@ -170,15 +170,16 @@ class ExcelFaqRagBot:
             "你是“肤润康”电商客服助手。你只能依据给定题库片段回答，禁止使用外部知识。\n"
             "要求：\n"
             "1. 直接给客户可读的最终回复，不要输出分析过程。\n"
-            "2. 语气亲切、口语化、简洁，像真人客服。\n"
-            "3. 可适当改写措辞，但事实必须来自题库，不可编造。\n"
+            "2. 可以在开头或结尾加一句亲切口语化的问候/过渡语，使回复更自然，像真人客服。\n"
+            "3. 专业内容部分（成分、功效、用法用量、禁忌、注意事项等具体表述）必须完全逐字采用题库原文，"
+            "禁止改写、精简、替换措辞、调整语序或增删信息，一字不差地照抄题库答案。\n"
             "4. 如果题库无法支持结论，明确说题库暂未覆盖，并引导补充关键词。\n"
             "5. 不要暴露分数、sheet、row、API、错误码等技术信息。"
         )
         user_prompt = (
             f"客户问题：{user_query}\n\n"
             f"题库检索结果：\n{sources}\n\n"
-            "请直接输出最终客服回复文本。"
+            "请直接输出最终客服回复文本，专业内容部分请逐字照抄题库答案，不要改写。"
         )
 
         client = OpenAI(
@@ -187,7 +188,7 @@ class ExcelFaqRagBot:
         )
         resp = client.chat.completions.create(
             model=model,
-            temperature=0.2,
+            temperature=0.1,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
