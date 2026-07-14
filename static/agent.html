@@ -13,45 +13,15 @@
       body {
         margin: 0;
         width: 100%;
-        min-height: 100%;
+        height: 100%;
         background: #f4f6fb;
         color: #172033;
         font-family: Arial, "Microsoft YaHei", sans-serif;
+        overflow: hidden;
       }
 
-      .topbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 16px 28px;
-        background: linear-gradient(135deg, #2f6fed, #25b8a8);
-        color: #fff;
-      }
-
-      .topbar h1 {
-        margin: 0;
-        font-size: 20px;
-      }
-
-      .topbar .who {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        font-size: 14px;
-      }
-
-      .topbar button {
-        border: 0;
-        background: rgba(255, 255, 255, 0.2);
-        color: #fff;
-        padding: 8px 14px;
-        border-radius: 10px;
-        cursor: pointer;
-        font-size: 14px;
-      }
-
-      .topbar button:hover {
-        background: rgba(255, 255, 255, 0.32);
+      button {
+        font-family: inherit;
       }
 
       /* ---------- 登录页 ---------- */
@@ -109,40 +79,583 @@
         text-align: center;
       }
 
-      /* ---------- 主体 ---------- */
+      /* ---------- 主体：整体骨架 ---------- */
       #main-view {
         display: none;
-        max-width: 1100px;
-        margin: 0 auto;
-        padding: 24px;
+        height: 100vh;
+        flex-direction: column;
       }
 
-      .panel {
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 24px;
+        background: linear-gradient(135deg, #2f6fed, #25b8a8);
+        color: #fff;
+        flex-shrink: 0;
+      }
+
+      .topbar h1 {
+        margin: 0;
+        font-size: 18px;
+      }
+
+      .topbar .who {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 13px;
+      }
+
+      .topbar button {
+        border: 0;
+        background: rgba(255, 255, 255, 0.2);
+        color: #fff;
+        padding: 7px 13px;
+        border-radius: 9px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+
+      .topbar button:hover {
+        background: rgba(255, 255, 255, 0.32);
+      }
+
+      .conn-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 6px;
+        background: #ffb020;
+      }
+
+      .conn-dot.online {
+        background: #2ecc71;
+      }
+
+      .app-layout {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+
+      /* ---------- 左侧：会话列表 ---------- */
+      .sidebar {
+        width: 360px;
+        min-width: 280px;
         background: #fff;
-        border-radius: 14px;
-        padding: 20px 22px;
-        margin-bottom: 20px;
-        box-shadow: 0 2px 14px rgba(20, 30, 60, 0.06);
+        border-right: 1px solid #e6eaf2;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
       }
 
-      .panel h3 {
-        margin: 0 0 14px;
-        font-size: 16px;
+      .sidebar-toolbar {
+        padding: 12px 16px;
+        border-bottom: 1px solid #eef1f7;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .mode-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        background: #eef3ff;
+        color: #2f6fed;
+        cursor: default;
+      }
+
+      .mode-chip.clickable {
+        cursor: pointer;
+      }
+
+      .filter-tabs {
+        display: flex;
+        gap: 6px;
+        padding: 10px 16px 0;
+      }
+
+      .filter-tab {
+        flex: 1;
+        text-align: center;
+        padding: 7px 4px;
+        font-size: 12px;
+        color: #6b7686;
+        border-radius: 8px;
+        cursor: pointer;
+        background: #f4f6fb;
+      }
+
+      .filter-tab.active {
+        background: #2f6fed;
+        color: #fff;
+      }
+
+      .conv-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 8px 0 8px;
+      }
+
+      .conv-empty {
+        text-align: center;
+        color: #94a1b8;
+        padding: 40px 16px;
+        font-size: 13px;
+      }
+
+      .conv-item {
+        display: flex;
+        gap: 10px;
+        padding: 12px 16px;
+        cursor: pointer;
+        border-bottom: 1px solid #f4f6fb;
+      }
+
+      .conv-item:hover {
+        background: #f7f9fd;
+      }
+
+      .conv-item.active {
+        background: #eef3ff;
+      }
+
+      .conv-avatar {
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        background: #cfd8ea;
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+
+      .conv-avatar.pending {
+        background: linear-gradient(135deg, #ffb020, #ff8a3d);
+      }
+
+      .conv-avatar.claimed {
+        background: linear-gradient(135deg, #2f6fed, #5b8cff);
+      }
+
+      .conv-avatar.answered {
+        background: linear-gradient(135deg, #25b8a8, #1a7d3a);
+      }
+
+      .conv-main {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .conv-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 6px;
+        margin-bottom: 3px;
+      }
+
+      .conv-id {
+        font-size: 13px;
+        font-weight: 700;
         color: #172033;
+      }
+
+      .conv-time {
+        font-size: 11px;
+        color: #a5aebd;
+        flex-shrink: 0;
+      }
+
+      .conv-question {
+        font-size: 13px;
+        color: #5c6579;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin-bottom: 5px;
+      }
+
+      .conv-badges {
+        display: flex;
+        gap: 5px;
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 20px;
+        font-size: 10.5px;
+        white-space: nowrap;
+      }
+
+      .badge.auto {
+        background: #e6f4ea;
+        color: #1a7d3a;
+      }
+
+      .badge.manual {
+        background: #fdeaea;
+        color: #c0392b;
+      }
+
+      .badge.collab {
+        background: #eaf1ff;
+        color: #2f6fed;
+      }
+
+      .badge.pending {
+        background: #fff4e0;
+        color: #b8860b;
+      }
+
+      .badge.claimed {
+        background: #eaf1ff;
+        color: #2f6fed;
+      }
+
+      .badge.answered {
+        background: #eafaf0;
+        color: #1a7d3a;
+      }
+
+      /* ---------- 右侧：会话详情（聊天窗） ---------- */
+      .thread {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        background: #eef1f8;
+      }
+
+      .thread-empty {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #a5aebd;
+        font-size: 14px;
+      }
+
+      .thread-header {
+        padding: 14px 26px;
+        background: #fff;
+        border-bottom: 1px solid #e6eaf2;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-shrink: 0;
+      }
+
+      .thread-header .title {
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .thread-header .sub {
+        font-size: 12px;
+        color: #94a1b8;
+        margin-top: 2px;
+      }
+
+      .thread-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 24px 30px;
+      }
+
+      .bubble-row {
+        display: flex;
+        margin-bottom: 6px;
+        gap: 10px;
+        align-items: flex-start;
+      }
+
+      .bubble-row.customer {
+        justify-content: flex-start;
+      }
+
+      .bubble-row.agent {
+        justify-content: flex-end;
+      }
+
+      .bubble-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: 700;
+        color: #fff;
+        flex-shrink: 0;
+      }
+
+      .bubble-avatar.customer {
+        background: #9aa5bd;
+      }
+
+      .bubble-avatar.agent {
+        background: #2f6fed;
+      }
+
+      .bubble {
+        max-width: 62%;
+        padding: 12px 15px;
+        border-radius: 14px;
+        line-height: 1.65;
+        font-size: 14px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .bubble.customer {
+        background: #fff;
+        border: 1px solid #e6eaf2;
+        border-top-left-radius: 4px;
+      }
+
+      .bubble.agent {
+        background: #2f6fed;
+        color: #fff;
+        border-top-right-radius: 4px;
+      }
+
+      .bubble-block {
+        margin-bottom: 22px;
+      }
+
+      .intent-wrap {
+        margin: 8px 0 0 42px;
+        max-width: 66%;
+      }
+
+      .intent-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 11px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+
+      .intent-badge.hit {
+        background: #eef4ff;
+        color: #2f6fed;
+      }
+
+      .intent-badge.miss {
+        background: #fff4e0;
+        color: #b8860b;
+      }
+
+      .intent-card {
+        background: #fff;
+        border: 1px solid #e6eaf2;
+        border-radius: 12px;
+        padding: 12px 14px;
+        font-size: 13px;
+        color: #4a5468;
+        line-height: 1.6;
+      }
+
+      .intent-card .q {
+        font-weight: 700;
+        color: #172033;
+        margin-bottom: 4px;
+      }
+
+      .draft-wrap {
+        margin: 8px 0 0 42px;
+        max-width: 66%;
+      }
+
+      .draft-label {
+        font-size: 12px;
+        color: #22705f;
+        font-weight: 700;
+        margin-bottom: 6px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .draft-box {
+        background: #f0f7f5;
+        border: 1.5px dashed #25b8a8;
+        border-radius: 12px;
+        padding: 10px 12px;
+      }
+
+      .draft-box textarea {
+        width: 100%;
+        min-height: 70px;
+        border: 0;
+        background: transparent;
+        resize: vertical;
+        font: inherit;
+        font-size: 14px;
+        color: #22705f;
+        outline: none;
+      }
+
+      .thread-note {
+        margin: 8px 0 0 42px;
+        color: #94a1b8;
+        font-size: 13px;
+        font-style: italic;
+      }
+
+      .thread-actions-inline {
+        margin: 10px 0 0 42px;
+        display: flex;
+        gap: 10px;
+      }
+
+      .compose-area {
+        border-top: 1px solid #e6eaf2;
+        background: #fff;
+        padding: 14px 26px 16px;
+        flex-shrink: 0;
+      }
+
+      .compose-area textarea {
+        width: 100%;
+        min-height: 64px;
+        border: 1px solid #d7dfec;
+        border-radius: 12px;
+        padding: 11px 13px;
+        font: inherit;
+        font-size: 14px;
+        resize: vertical;
+        margin-bottom: 10px;
+        outline: none;
+      }
+
+      .compose-area textarea:focus {
+        border-color: #2f6fed;
+      }
+
+      .compose-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+      }
+
+      .btn {
+        border: 0;
+        padding: 9px 18px;
+        border-radius: 9px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      .btn-primary {
+        background: #2f6fed;
+        color: #fff;
+      }
+
+      .btn-secondary {
+        background: #eef1f7;
+        color: #445;
+      }
+
+      .btn-danger {
+        background: #fdeaea;
+        color: #c0392b;
+      }
+
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .claim-bar {
+        border-top: 1px solid #e6eaf2;
+        background: #fff;
+        padding: 14px 26px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-shrink: 0;
+      }
+
+      .claim-bar span {
+        color: #94a1b8;
+        font-size: 13px;
+      }
+
+      /* ---------- 管理员：模式与账号 抽屉 ---------- */
+      .drawer-mask {
+        position: fixed;
+        inset: 0;
+        background: rgba(10, 15, 30, 0.4);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 998;
+      }
+
+      .drawer-mask.show {
+        display: flex;
+      }
+
+      .drawer {
+        width: 480px;
+        max-height: 82vh;
+        overflow-y: auto;
+        background: #fff;
+        border-radius: 16px;
+        padding: 24px 26px;
+      }
+
+      .drawer h3 {
+        margin: 0 0 16px;
+        font-size: 16px;
+      }
+
+      .drawer h4 {
+        margin: 22px 0 12px;
+        font-size: 14px;
+        color: #445;
+      }
+
+      .drawer-close {
+        float: right;
+        border: 0;
+        background: #f4f6fb;
+        border-radius: 8px;
+        padding: 6px 12px;
+        cursor: pointer;
+        font-size: 13px;
       }
 
       .mode-options {
         display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
+        flex-direction: column;
+        gap: 10px;
       }
 
       .mode-option {
-        flex: 1;
-        min-width: 160px;
         border: 2px solid #e3e8f2;
         border-radius: 12px;
-        padding: 14px;
+        padding: 12px 14px;
         cursor: pointer;
         transition: border-color 0.15s, background 0.15s;
       }
@@ -159,138 +672,13 @@
 
       .mode-option strong {
         display: block;
-        margin-bottom: 4px;
+        margin-bottom: 3px;
         font-size: 14px;
       }
 
       .mode-option span {
         font-size: 12px;
         color: #6b7686;
-      }
-
-      .queue-empty {
-        text-align: center;
-        color: #94a1b8;
-        padding: 30px 0;
-        font-size: 14px;
-      }
-
-      .queue-item {
-        border: 1px solid #e6eaf2;
-        border-radius: 12px;
-        padding: 16px;
-        margin-bottom: 14px;
-      }
-
-      .queue-item .meta {
-        display: flex;
-        justify-content: space-between;
-        font-size: 12px;
-        color: #94a1b8;
-        margin-bottom: 8px;
-      }
-
-      .badge {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 20px;
-        font-size: 11px;
-        margin-left: 6px;
-      }
-
-      .badge.auto { background: #e6f4ea; color: #1a7d3a; }
-      .badge.manual { background: #fdeaea; color: #c0392b; }
-      .badge.collab { background: #eaf1ff; color: #2f6fed; }
-      .badge.pending { background: #fff4e0; color: #b8860b; }
-      .badge.claimed { background: #eaf1ff; color: #2f6fed; }
-      .badge.answered { background: #eafaf0; color: #1a7d3a; }
-
-      .queue-item .question {
-        font-size: 15px;
-        font-weight: 600;
-        margin-bottom: 10px;
-        line-height: 1.5;
-      }
-
-      .ai-suggestion {
-        background: #f0f7f5;
-        border: 1px dashed #25b8a8;
-        border-radius: 10px;
-        padding: 10px 12px;
-        font-size: 13px;
-        color: #22705f;
-        margin-bottom: 10px;
-        white-space: pre-wrap;
-      }
-
-      .ai-suggestion .label {
-        font-weight: 700;
-        margin-bottom: 4px;
-        display: block;
-      }
-
-      .retrieval-info {
-        border-radius: 10px;
-        padding: 10px 12px;
-        font-size: 12px;
-        margin-bottom: 10px;
-        white-space: pre-wrap;
-        line-height: 1.5;
-      }
-
-      .retrieval-info.hit {
-        background: #f5f8ff;
-        border: 1px dashed #94a9d8;
-        color: #3a4a72;
-      }
-
-      .retrieval-info.miss {
-        background: #fff7f2;
-        border: 1px dashed #e0a26b;
-        color: #8a5a2e;
-      }
-
-      .retrieval-info .label {
-        font-weight: 700;
-        margin-bottom: 4px;
-        display: block;
-      }
-
-      .queue-item textarea {
-        width: 100%;
-        min-height: 70px;
-        border: 1px solid #d7dfec;
-        border-radius: 10px;
-        padding: 10px 12px;
-        font: inherit;
-        font-size: 14px;
-        resize: vertical;
-        margin-bottom: 10px;
-      }
-
-      .queue-item .actions {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-
-      .btn {
-        border: 0;
-        padding: 9px 16px;
-        border-radius: 9px;
-        font-size: 13px;
-        cursor: pointer;
-      }
-
-      .btn-primary { background: #2f6fed; color: #fff; }
-      .btn-secondary { background: #eef1f7; color: #445; }
-      .btn-danger { background: #fdeaea; color: #c0392b; }
-      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-      .claimed-by-other {
-        color: #94a1b8;
-        font-size: 13px;
-        font-style: italic;
       }
 
       .agents-list {
@@ -309,13 +697,14 @@
 
       .create-agent-form {
         display: flex;
-        gap: 10px;
+        gap: 8px;
         flex-wrap: wrap;
       }
 
-      .create-agent-form input {
+      .create-agent-form input,
+      .create-agent-form select {
         flex: 1;
-        min-width: 120px;
+        min-width: 110px;
         padding: 9px 10px;
         border: 1px solid #d7dfec;
         border-radius: 8px;
@@ -341,17 +730,6 @@
         opacity: 1;
         transform: translateY(0);
       }
-
-      .conn-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        display: inline-block;
-        margin-right: 6px;
-        background: #ffb020;
-      }
-
-      .conn-dot.online { background: #2ecc71; }
     </style>
   </head>
   <body>
@@ -371,34 +749,45 @@
         <div class="who">
           <span><span class="conn-dot" id="conn-dot"></span><span id="conn-text">连接中...</span></span>
           <span id="who-name"></span>
+          <button id="settings-btn">工作台设置</button>
           <button id="logout-btn">退出登录</button>
         </div>
       </div>
 
-      <div id="main-content" style="padding: 0 24px 24px; max-width: 1100px; margin: 0 auto;">
-        <div class="panel" id="mode-panel">
-          <h3>工作模式</h3>
-          <div class="mode-options" id="mode-options"></div>
+      <div class="app-layout">
+        <div class="sidebar">
+          <div class="sidebar-toolbar">
+            <span class="mode-chip" id="current-mode-chip">当前模式：--</span>
+          </div>
+          <div class="filter-tabs" id="filter-tabs">
+            <div class="filter-tab active" data-filter="all">全部</div>
+            <div class="filter-tab" data-filter="pending">待处理</div>
+            <div class="filter-tab" data-filter="claimed">已认领</div>
+            <div class="filter-tab" data-filter="answered">已回复</div>
+          </div>
+          <div class="conv-list" id="conv-list"></div>
         </div>
 
-        <div class="panel">
-          <h3>待处理队列 <span id="queue-count" style="color:#94a1b8; font-weight:normal;"></span></h3>
-          <div id="queue-list"></div>
+        <div class="thread" id="thread">
+          <div class="thread-empty" id="thread-empty">从左侧选择一条对话，查看题库检索标注与回复详情</div>
         </div>
+      </div>
+    </div>
 
-        <div class="panel">
-          <h3>历史记录 <span style="color:#94a1b8; font-weight:normal;">（最近 50 条，含全AI模式与人机协同，可查看每条题库检索标注）</span></h3>
-          <div id="history-list"></div>
-        </div>
+    <div class="drawer-mask" id="drawer-mask">
+      <div class="drawer">
+        <button class="drawer-close" id="drawer-close">关闭</button>
+        <h3>工作模式</h3>
+        <div class="mode-options" id="mode-options"></div>
 
-        <div class="panel" id="admin-panel" style="display: none;">
-          <h3>客服账号管理（管理员）</h3>
+        <div id="admin-agents-section" style="display: none;">
+          <h4>客服账号管理（管理员）</h4>
           <ul class="agents-list" id="agents-list"></ul>
           <div class="create-agent-form">
             <input id="new-username" placeholder="用户名" />
             <input id="new-password" placeholder="密码" type="password" />
             <input id="new-displayname" placeholder="显示名称" />
-            <select id="new-role" style="padding:9px 10px;border:1px solid #d7dfec;border-radius:8px;font-size:13px;">
+            <select id="new-role">
               <option value="agent">客服</option>
               <option value="admin">管理员</option>
             </select>
@@ -420,11 +809,15 @@
       const loginError = document.getElementById("login-error");
       const logoutBtn = document.getElementById("logout-btn");
       const whoName = document.getElementById("who-name");
-      const queueList = document.getElementById("queue-list");
-      const queueCount = document.getElementById("queue-count");
-      const historyList = document.getElementById("history-list");
+      const convList = document.getElementById("conv-list");
+      const filterTabs = document.getElementById("filter-tabs");
+      const threadEl = document.getElementById("thread");
+      const currentModeChip = document.getElementById("current-mode-chip");
+      const settingsBtn = document.getElementById("settings-btn");
+      const drawerMask = document.getElementById("drawer-mask");
+      const drawerClose = document.getElementById("drawer-close");
       const modeOptions = document.getElementById("mode-options");
-      const adminPanel = document.getElementById("admin-panel");
+      const adminAgentsSection = document.getElementById("admin-agents-section");
       const agentsList = document.getElementById("agents-list");
       const toastEl = document.getElementById("toast");
       const connDot = document.getElementById("conn-dot");
@@ -436,15 +829,27 @@
         collab: { label: "人机协同模式", desc: "AI 生成建议答案，客服审核后再发送" },
       };
 
+      const STATUS_LABEL = { pending: "待处理", claimed: "已认领", answered: "已回复" };
+
       let currentAgent = null;
       let currentToken = null;
       let currentMode = "auto";
       let ws = null;
 
+      let conversations = []; // 合并后的会话列表（队列 + 历史），按 id 降序
+      let selectedId = null;
+      let activeFilter = "all";
+
       function showToast(text) {
         toastEl.textContent = text;
         toastEl.classList.add("show");
         setTimeout(() => toastEl.classList.remove("show"), 2500);
+      }
+
+      function escapeHtml(str) {
+        const div = document.createElement("div");
+        div.textContent = str == null ? "" : str;
+        return div.innerHTML;
       }
 
       function authHeaders() {
@@ -482,6 +887,8 @@
         if (ws) ws.close();
         currentAgent = null;
         currentToken = null;
+        selectedId = null;
+        conversations = [];
         loginView.style.display = "flex";
         mainView.style.display = "none";
       }
@@ -520,25 +927,31 @@
 
       logoutBtn.addEventListener("click", logout);
 
+      settingsBtn.addEventListener("click", () => drawerMask.classList.add("show"));
+      drawerClose.addEventListener("click", () => drawerMask.classList.remove("show"));
+      drawerMask.addEventListener("click", (e) => {
+        if (e.target === drawerMask) drawerMask.classList.remove("show");
+      });
+
       function enterApp(token, agent) {
         currentToken = token;
         currentAgent = agent;
         loginView.style.display = "none";
-        mainView.style.display = "block";
+        mainView.style.display = "flex";
         whoName.textContent = `${agent.displayName}（${agent.role === "admin" ? "管理员" : "客服"}）`;
-        adminPanel.style.display = agent.role === "admin" ? "block" : "none";
+        adminAgentsSection.style.display = agent.role === "admin" ? "block" : "none";
         refreshMode();
-        refreshQueue();
-        refreshHistory();
+        refreshConversations();
         if (agent.role === "admin") refreshAgents();
         connectWebSocket(token);
       }
 
-      // ---------------- 模式面板 ----------------
+      // ---------------- 工作模式 ----------------
 
       async function refreshMode() {
         const data = await apiFetch("/api/mode");
         currentMode = data.mode;
+        currentModeChip.textContent = `当前模式：${MODE_META[currentMode]?.label || currentMode}`;
         renderModeOptions();
       }
 
@@ -564,6 +977,7 @@
               try {
                 await apiFetch("/api/mode", { method: "POST", body: JSON.stringify({ mode }) });
                 currentMode = mode;
+                currentModeChip.textContent = `当前模式：${MODE_META[currentMode]?.label || currentMode}`;
                 renderModeOptions();
                 showToast(`已切换为：${MODE_META[mode].label}`);
               } catch (err) {
@@ -574,93 +988,192 @@
         }
       }
 
-      // ---------------- 队列面板 ----------------
+      // ---------------- 会话列表（合并 队列 + 历史，保留全部记录） ----------------
 
-      function escapeHtml(str) {
-        const div = document.createElement("div");
-        div.textContent = str;
-        return div.innerHTML;
+      function mergeConversations(queueItems, historyItems) {
+        const map = new Map();
+        (historyItems || []).forEach((item) => map.set(item.id, item));
+        (queueItems || []).forEach((item) => map.set(item.id, { ...map.get(item.id), ...item }));
+        return Array.from(map.values()).sort((a, b) => b.id - a.id);
       }
 
-      function renderRetrievalInfo(item, missHint) {
+      function avatarClassFor(item) {
+        if (item.status === "answered") return "answered";
+        if (item.status === "claimed") return "claimed";
+        return "pending";
+      }
+
+      function renderConvList() {
+        const filtered =
+          activeFilter === "all" ? conversations : conversations.filter((c) => c.status === activeFilter);
+
+        if (filtered.length === 0) {
+          convList.innerHTML = `<div class="conv-empty">暂无对话记录</div>`;
+          return;
+        }
+
+        convList.innerHTML = filtered
+          .map((item) => {
+            const active = item.id === selectedId ? "active" : "";
+            const modeBadge = `<span class="badge ${item.mode_used}">${MODE_META[item.mode_used]?.label || item.mode_used}</span>`;
+            const statusBadge = `<span class="badge ${item.status}">${STATUS_LABEL[item.status] || item.status}</span>`;
+            return `
+              <div class="conv-item ${active}" data-conv-id="${item.id}">
+                <div class="conv-avatar ${avatarClassFor(item)}">${item.id}</div>
+                <div class="conv-main">
+                  <div class="conv-top">
+                    <span class="conv-id">#${item.id}</span>
+                    <span class="conv-time">${item.created_at || ""}</span>
+                  </div>
+                  <div class="conv-question">${escapeHtml(item.question)}</div>
+                  <div class="conv-badges">${modeBadge}${statusBadge}</div>
+                </div>
+              </div>`;
+          })
+          .join("");
+
+        convList.querySelectorAll(".conv-item").forEach((el) => {
+          el.addEventListener("click", () => {
+            selectConversation(Number(el.getAttribute("data-conv-id")));
+          });
+        });
+      }
+
+      filterTabs.querySelectorAll(".filter-tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          activeFilter = tab.getAttribute("data-filter");
+          filterTabs.querySelectorAll(".filter-tab").forEach((t) => t.classList.remove("active"));
+          tab.classList.add("active");
+          renderConvList();
+        });
+      });
+
+      function selectConversation(id) {
+        selectedId = id;
+        renderConvList();
+        renderThread();
+      }
+
+      // ---------------- 会话详情（聊天窗） ----------------
+
+      function renderIntentBlock(item, missHint) {
         if (item.matched === 1) {
           const scoreText = typeof item.match_score === "number" ? `${(item.match_score * 100).toFixed(0)}%` : "-";
           return `
-            <div class="retrieval-info hit">
-              <span class="label">题库检索标注：命中（匹配度 ${scoreText}）</span>
-              问题：${escapeHtml(item.matched_question || "")}
-              答案：${escapeHtml(item.matched_answer || "")}
+            <div class="intent-wrap">
+              <span class="intent-badge hit">✨ AI 识别：命中题库问题（匹配度 ${scoreText}）</span>
+              <div class="intent-card">
+                <div class="q">${escapeHtml(item.matched_question || "")}</div>
+                <div>${escapeHtml(item.matched_answer || "")}</div>
+              </div>
             </div>`;
         }
         if (item.matched === 0) {
           return `
-            <div class="retrieval-info miss">
-              <span class="label">题库检索标注：未检索到匹配问题</span>
-              ${missHint}
+            <div class="intent-wrap">
+              <span class="intent-badge miss">⚠️ AI 识别：未命中题库</span>
+              <div class="intent-card">${missHint}</div>
             </div>`;
         }
         return "";
       }
 
-      function renderQueueItem(item) {
+      function renderThread() {
+        const item = conversations.find((c) => c.id === selectedId);
+        if (!item) {
+          threadEl.innerHTML = `<div class="thread-empty" id="thread-empty">从左侧选择一条对话，查看题库检索标注与回复详情</div>`;
+          return;
+        }
+
         const modeBadge = `<span class="badge ${item.mode_used}">${MODE_META[item.mode_used]?.label || item.mode_used}</span>`;
-        const statusBadge = `<span class="badge ${item.status}">${item.status === "pending" ? "待处理" : "已认领"}</span>`;
-        const time = item.created_at || "";
+        const statusBadge = `<span class="badge ${item.status}">${STATUS_LABEL[item.status] || item.status}</span>`;
 
-        const suggestionHtml = item.ai_suggested_answer
-          ? `<div class="ai-suggestion"><span class="label">AI 建议回复（匹配度 ${(item.match_score * 100).toFixed(0)}%）：</span>${escapeHtml(item.ai_suggested_answer)}</div>`
-          : "";
-
-        const retrievalHtml = renderRetrievalInfo(
-          item,
-          "题库中暂无对应说明，请客服根据实际情况人工回复，或补充题库后重新检索。"
-        );
+        let messagesHtml = `
+          <div class="bubble-block">
+            <div class="bubble-row customer">
+              <div class="bubble-avatar customer">客</div>
+              <div class="bubble customer">${escapeHtml(item.question)}</div>
+            </div>
+            ${renderIntentBlock(item, item.status === "answered" ? "题库中暂无对应说明。" : "题库中暂无对应说明，请客服根据实际情况人工回复，或补充题库后重新检索。")}
+          </div>`;
 
         const isMine = item.claimed_by === currentAgent.id;
         const isClaimedByOther = item.claimed_by && !isMine;
 
-        let bodyHtml = "";
-        if (isClaimedByOther) {
-          bodyHtml = `${retrievalHtml}<div class="claimed-by-other">客服「${escapeHtml(item.claimed_by_name || "")}」正在处理中...</div>`;
-        } else if (item.status === "pending") {
-          bodyHtml = `
-            ${retrievalHtml}
-            ${suggestionHtml}
-            <div class="actions">
-              <button class="btn btn-primary" data-action="claim" data-id="${item.id}">认领此问题</button>
+        if (item.status === "answered") {
+          messagesHtml += `
+            <div class="bubble-block">
+              <div class="bubble-row agent">
+                <div class="bubble agent">${escapeHtml(item.final_answer || "")}</div>
+                <div class="bubble-avatar agent">客服</div>
+              </div>
             </div>`;
-        } else if (isMine) {
-          const prefill = item.ai_suggested_answer || "";
-          bodyHtml = `
-            ${retrievalHtml}
-            ${suggestionHtml}
-            <textarea data-answer-input="${item.id}" placeholder="输入回复内容...">${escapeHtml(prefill)}</textarea>
-            <div class="actions">
-              <button class="btn btn-primary" data-action="answer" data-id="${item.id}">发送回复</button>
-              <button class="btn btn-secondary" data-action="release" data-id="${item.id}">释放认领</button>
+          threadEl.innerHTML = `
+            ${threadHeaderHtml(item, modeBadge, statusBadge)}
+            <div class="thread-messages">${messagesHtml}</div>`;
+          return;
+        }
+
+        if (isClaimedByOther) {
+          messagesHtml += `<div class="thread-note">客服「${escapeHtml(item.claimed_by_name || "")}」正在处理中...</div>`;
+          threadEl.innerHTML = `
+            ${threadHeaderHtml(item, modeBadge, statusBadge)}
+            <div class="thread-messages">${messagesHtml}</div>`;
+          return;
+        }
+
+        // 待处理（未认领）或本人已认领：展示 AI 草稿建议 + 输入区
+        if (item.ai_suggested_answer) {
+          messagesHtml += `
+            <div class="draft-wrap">
+              <div class="draft-label">💡 AI 建议回复（未发送，可编辑后再发送）</div>
+              <div class="draft-box">${escapeHtml(item.ai_suggested_answer)}</div>
             </div>`;
         }
 
+        threadEl.innerHTML = `
+          ${threadHeaderHtml(item, modeBadge, statusBadge)}
+          <div class="thread-messages">${messagesHtml}</div>
+          ${composeAreaHtml(item, isMine)}`;
+
+        bindComposeActions(item);
+      }
+
+      function threadHeaderHtml(item, modeBadge, statusBadge) {
         return `
-          <div class="queue-item" data-item-id="${item.id}">
-            <div class="meta">
-              <span>#${item.id} · ${time}</span>
-              <span>${modeBadge}${statusBadge}</span>
+          <div class="thread-header">
+            <div>
+              <div class="title">对话 #${item.id}</div>
+              <div class="sub">${item.created_at || ""}</div>
             </div>
-            <div class="question">${escapeHtml(item.question)}</div>
-            ${bodyHtml}
+            <div>${modeBadge}${statusBadge}</div>
           </div>`;
       }
 
-      function renderQueue(items) {
-        queueCount.textContent = items.length ? `(${items.length})` : "";
-        if (items.length === 0) {
-          queueList.innerHTML = `<div class="queue-empty">暂无待处理问题</div>`;
-          return;
+      function composeAreaHtml(item, isMine) {
+        if (item.status === "pending") {
+          return `
+            <div class="claim-bar">
+              <span>该问题尚未被认领，认领后即可回复客户</span>
+              <button class="btn btn-primary" data-action="claim" data-id="${item.id}">认领此问题</button>
+            </div>`;
         }
-        queueList.innerHTML = items.map(renderQueueItem).join("");
+        if (item.status === "claimed" && isMine) {
+          const prefill = item.ai_suggested_answer || "";
+          return `
+            <div class="compose-area">
+              <textarea data-answer-input="${item.id}" placeholder="输入回复内容...">${escapeHtml(prefill)}</textarea>
+              <div class="compose-actions">
+                <button class="btn btn-secondary" data-action="release" data-id="${item.id}">释放认领</button>
+                <button class="btn btn-primary" data-action="answer" data-id="${item.id}">发送回复</button>
+              </div>
+            </div>`;
+        }
+        return "";
+      }
 
-        queueList.querySelectorAll("[data-action]").forEach((btn) => {
+      function bindComposeActions(item) {
+        threadEl.querySelectorAll("[data-action]").forEach((btn) => {
           const id = btn.getAttribute("data-id");
           const action = btn.getAttribute("data-action");
           btn.addEventListener("click", async () => {
@@ -682,8 +1195,7 @@
                 });
                 showToast("回复已发送");
               }
-              refreshQueue();
-              refreshHistory();
+              await refreshConversations();
             } catch (err) {
               showToast(err.message);
             }
@@ -691,56 +1203,17 @@
         });
       }
 
-      async function refreshQueue() {
+      // ---------------- 数据拉取 ----------------
+
+      async function refreshConversations() {
         try {
-          const data = await apiFetch("/api/agent/queue");
-          renderQueue(data.items);
-        } catch (err) {
-          // 忽略瞬时错误，等待下一次轮询/推送
-        }
-      }
-
-      // ---------------- 历史记录（含全AI模式与人机协同的题库检索标注） ----------------
-
-      const STATUS_LABEL = { pending: "待处理", claimed: "已认领", answered: "已回复" };
-
-      function renderHistoryItem(item) {
-        const modeBadge = `<span class="badge ${item.mode_used}">${MODE_META[item.mode_used]?.label || item.mode_used}</span>`;
-        const statusBadge = `<span class="badge ${item.status}">${STATUS_LABEL[item.status] || item.status}</span>`;
-        const time = item.created_at || "";
-
-        const retrievalHtml = renderRetrievalInfo(item, "题库中暂无对应说明。");
-
-        const replyText = item.final_answer || item.ai_suggested_answer || "";
-        const replyLabel = item.final_answer ? "最终回复" : "AI 建议回复";
-        const replyHtml = replyText
-          ? `<div class="ai-suggestion"><span class="label">${replyLabel}：</span>${escapeHtml(replyText)}</div>`
-          : "";
-
-        return `
-          <div class="queue-item">
-            <div class="meta">
-              <span>#${item.id} · ${time}</span>
-              <span>${modeBadge}${statusBadge}</span>
-            </div>
-            <div class="question">${escapeHtml(item.question)}</div>
-            ${retrievalHtml}
-            ${replyHtml}
-          </div>`;
-      }
-
-      function renderHistory(items) {
-        if (!items || items.length === 0) {
-          historyList.innerHTML = `<div class="queue-empty">暂无历史记录</div>`;
-          return;
-        }
-        historyList.innerHTML = items.map(renderHistoryItem).join("");
-      }
-
-      async function refreshHistory() {
-        try {
-          const data = await apiFetch("/api/agent/history");
-          renderHistory(data.items);
+          const [queueData, historyData] = await Promise.all([
+            apiFetch("/api/agent/queue"),
+            apiFetch("/api/agent/history"),
+          ]);
+          conversations = mergeConversations(queueData.items, historyData.items);
+          renderConvList();
+          if (selectedId != null) renderThread();
         } catch (err) {
           // 忽略瞬时错误，等待下一次轮询/推送
         }
@@ -807,17 +1280,13 @@
           connDot.classList.remove("online");
         };
         ws.onmessage = () => {
-          refreshQueue();
-          refreshHistory();
+          refreshConversations();
         };
       }
 
-      // 兜底轮询，防止 WebSocket 断连时队列/历史记录不刷新
+      // 兜底轮询，防止 WebSocket 断连时列表不刷新
       setInterval(() => {
-        if (currentToken) {
-          refreshQueue();
-          refreshHistory();
-        }
+        if (currentToken) refreshConversations();
       }, 5000);
 
       // ---------------- 自动恢复登录态 ----------------
