@@ -248,9 +248,11 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 700;
         flex-shrink: 0;
+        padding: 0 2px;
+        overflow: hidden;
       }
 
       .conv-avatar.pending {
@@ -1030,12 +1032,12 @@
         return "answered";
       }
 
+      function visitorLabel(session) {
+        return session.visitor_no ? `访客${session.visitor_no}` : "访客";
+      }
+
       function avatarLabel(session) {
-        if (session.client_ip) {
-          const parts = String(session.client_ip).split(".");
-          return parts[parts.length - 1] || session.client_ip.slice(0, 2);
-        }
-        return (session.session_id || "??").slice(0, 2).toUpperCase();
+        return session.visitor_no ? String(session.visitor_no) : "?";
       }
 
       function sessionStatusBadge(session) {
@@ -1072,7 +1074,7 @@
                 <div class="conv-avatar ${avatarClassFor(session)}">${escapeHtml(avatarLabel(session))}</div>
                 <div class="conv-main">
                   <div class="conv-top">
-                    <span class="conv-id">${escapeHtml(session.client_ip || "未知IP")}</span>
+                    <span class="conv-id">${escapeHtml(visitorLabel(session))}</span>
                     <span class="conv-time">${session.last_activity || ""}</span>
                   </div>
                   <div class="conv-question">${escapeHtml(session.last_question || "")}</div>
@@ -1182,8 +1184,8 @@
         const header = `
           <div class="thread-header">
             <div>
-              <div class="title">客户会话 · ${escapeHtml(session.client_ip || "未知IP")}</div>
-              <div class="sub">共 ${session.message_count} 条提问 · 最近活跃 ${session.last_activity || ""}</div>
+              <div class="title">客户会话 · ${escapeHtml(visitorLabel(session))}</div>
+              <div class="sub">共 ${session.message_count} 条提问 · 最近活跃 ${session.last_activity || ""}${session.client_ip ? ` · IP ${escapeHtml(session.client_ip)}` : ""}</div>
             </div>
           </div>`;
 

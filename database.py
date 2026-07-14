@@ -289,8 +289,14 @@ def list_recent(limit: int = 50) -> list:
 
 def list_sessions(limit: int = 200) -> list:
     """按客户会话（session_id）分组汇总，客服工作台以此实现"一个用户一个对话框"。
-    IP 仅作为展示参考，不作为分组依据，因为同一 IP 下可能有多个真实客户（如同一 WiFi）。"""
+    IP 和 session_id 都不适合直接展示给客服（IP 可能拿不到/意义不明，session_id 是随机字符串），
+    因此额外分配一个稳定的"访客编号"（按首次提问时间先后顺序，1、2、3...），作为对客服友好的身份标识。"""
     with get_conn() as conn:
+        order_rows = conn.execute(
+            "SELECT session_id, MIN(id) AS first_id FROM conversations GROUP BY session_id ORDER BY first_id ASC"
+        ).fetchall()
+        visitor_no_map = {row["session_id"]: idx + 1 for idx, row in enumerate(order_rows)}
+
         rows = conn.execute(
             """
             SELECT
@@ -310,6 +316,7 @@ def list_sessions(limit: int = 200) -> list:
         sessions = [dict(r) for r in rows]
 
         for session in sessions:
+            session["visitor_no"] = visitor_no_map.get(session["session_id"], 0)
             last_row = conn.execute(
                 """
                 SELECT question, client_ip, mode_used, status
