@@ -539,6 +539,32 @@
         font-style: italic;
       }
 
+      .countdown-note {
+        margin: 8px 0 0 42px;
+        max-width: 66%;
+        background: #fff6e8;
+        border: 1px solid #f3c46a;
+        color: #a3660b;
+        font-size: 13px;
+        border-radius: 10px;
+        padding: 7px 12px;
+      }
+
+      .countdown-note .countdown-secs {
+        font-weight: 700;
+        color: #d3790a;
+      }
+
+      .countdown-note.countdown-urgent {
+        background: #fdeaea;
+        border-color: #ef9a9a;
+        color: #c62828;
+      }
+
+      .countdown-note.countdown-urgent .countdown-secs {
+        color: #c62828;
+      }
+
       .msg-meta {
         display: flex;
         justify-content: space-between;
@@ -1167,6 +1193,12 @@
                 <div class="draft-box">${escapeHtml(item.ai_suggested_answer)}</div>
               </div>`;
           }
+          if (item.status === "pending" && item.mode_used === "collab" && item.auto_send_at) {
+            html += `
+              <div class="countdown-note" data-deadline="${escapeHtml(item.auto_send_at)}">
+                ⏳ 若无人认领，AI 建议将在 <span class="countdown-secs">--</span> 秒后自动发送给客户
+              </div>`;
+          }
           html += composeAreaHtml(item, isMine);
         }
 
@@ -1193,6 +1225,7 @@
 
         threadEl.innerHTML = `${header}<div class="thread-messages" id="thread-messages-scroll">${messagesHtml}</div>`;
         bindComposeActions();
+        updateCountdowns();
 
         const scrollEl = document.getElementById("thread-messages-scroll");
         if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
@@ -1347,6 +1380,20 @@
       setInterval(() => {
         if (currentToken) refreshAll();
       }, 5000);
+
+      // ---------------- 人机协同倒计时（每秒刷新一次显示，不依赖整体重渲染） ----------------
+
+      function updateCountdowns() {
+        document.querySelectorAll(".countdown-note[data-deadline]").forEach((el) => {
+          const deadline = new Date(el.getAttribute("data-deadline")).getTime();
+          const secsEl = el.querySelector(".countdown-secs");
+          if (!secsEl || Number.isNaN(deadline)) return;
+          const remaining = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+          secsEl.textContent = remaining;
+          el.classList.toggle("countdown-urgent", remaining <= 3);
+        });
+      }
+      setInterval(updateCountdowns, 1000);
 
       // ---------------- 自动恢复登录态 ----------------
 

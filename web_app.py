@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -222,6 +223,8 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
             timeout = float(
                 database.get_setting("collab_auto_send_seconds", str(DEFAULT_COLLAB_AUTO_SEND_SECONDS))
             )
+            auto_send_at = (datetime.utcnow() + timedelta(seconds=timeout)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            database.set_auto_send_at(conversation_id, auto_send_at)
             asyncio.create_task(_auto_send_after_timeout(conversation_id, result.text, timeout))
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] 协同模式生成AI建议失败: {exc}", file=sys.stderr)

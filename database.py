@@ -78,6 +78,7 @@ def init_db() -> None:
         _add_column_if_missing(conn, "conversations", "matched_answer", "TEXT")
         # 记录客户端 IP，便于客服工作台展示（分组仍以 session_id 为准，IP 仅作参考）
         _add_column_if_missing(conn, "conversations", "client_ip", "TEXT")
+        _add_column_if_missing(conn, "conversations", "auto_send_at", "TEXT")
 
         row = conn.execute("SELECT value FROM settings WHERE key = 'global_mode'").fetchone()
         if row is None:
@@ -205,6 +206,15 @@ def set_ai_suggestion(conversation_id: int, suggestion: str, score: float) -> No
             WHERE id = ?
             """,
             (suggestion, score, conversation_id),
+        )
+
+
+def set_auto_send_at(conversation_id: int, auto_send_at: Optional[str]) -> None:
+    """记录人机协同模式下 AI 建议自动发送的截止时间（UTC，ISO 格式），供前端倒计时展示。"""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE conversations SET auto_send_at = ? WHERE id = ?",
+            (auto_send_at, conversation_id),
         )
 
 
