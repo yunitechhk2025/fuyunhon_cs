@@ -76,6 +76,8 @@ def init_db() -> None:
         _add_column_if_missing(conn, "conversations", "matched", "INTEGER")
         _add_column_if_missing(conn, "conversations", "matched_question", "TEXT")
         _add_column_if_missing(conn, "conversations", "matched_answer", "TEXT")
+        # 记录客户端 IP，便于客服工作台展示（分组仍以 session_id 为准，IP 仅作参考）
+        _add_column_if_missing(conn, "conversations", "client_ip", "TEXT")
 
         row = conn.execute("SELECT value FROM settings WHERE key = 'global_mode'").fetchone()
         if row is None:
@@ -163,11 +165,13 @@ def update_agent_password(agent_id: int, new_password: str) -> None:
 
 # ---------- conversations ----------
 
-def create_conversation(session_id: str, question: str, mode_used: str) -> int:
+def create_conversation(
+    session_id: str, question: str, mode_used: str, client_ip: Optional[str] = None
+) -> int:
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO conversations (session_id, question, mode_used) VALUES (?, ?, ?)",
-            (session_id, question, mode_used),
+            "INSERT INTO conversations (session_id, question, mode_used, client_ip) VALUES (?, ?, ?, ?)",
+            (session_id, question, mode_used, client_ip),
         )
         return cur.lastrowid
 
@@ -279,5 +283,65 @@ def list_recent(limit: int = 50) -> list:
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM conversations ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_sessions(limit: int = 200) -> list:
+    """按客户会话（session_id）分组汇总，客服工作台以此实现"一个用户一个对话框"。
+    IP 仅作为展示参考，不作为分组依据，因为同一 IP 下可能有多个真实客户（如同一 WiFi）。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                session_id,
+                COUNT(*) AS message_count,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+                SUM(CASE WHEN status = 'claimed' THEN 1 ELSE 0 END) AS claimed_count,
+                MAX(created_at) AS last_activity,
+                MIN(created_at) AS first_activity
+            FROM conversations
+            GROUP BY session_id
+            ORDER BY last_activity DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        sessions = [dict(r) for r in rows]
+
+        for session in sessions:
+            last_row = conn.execute(
+                """
+                SELECT question, client_ip, mode_used, status
+                FROM conversations
+                WHERE session_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (session["session_id"],),
+            ).fetchone()
+            if last_row:
+                session["last_question"] = last_row["question"]
+                session["last_mode"] = last_row["mode_used"]
+                session["last_status"] = last_row["status"]
+            ip_row = conn.execute(
+                """
+                SELECT client_ip FROM conversations
+                WHERE session_id = ? AND client_ip IS NOT NULL AND client_ip != ''
+                ORDER BY id DESC LIMIT 1
+                """,
+                (session["session_id"],),
+            ).fetchone()
+            session["client_ip"] = ip_row["client_ip"] if ip_row else None
+
+        return sessions
+
+
+def list_session_messages(session_id: str) -> list:
+    """返回某个用户会话下的全部提问/回复记录，按时间顺序排列，用于客服工作台的连续对话展示。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM conversations WHERE session_id = ? ORDER BY id ASC",
+            (session_id,),
         ).fetchall()
         return [dict(r) for r in rows]

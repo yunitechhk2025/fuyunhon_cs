@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -110,6 +110,18 @@ def _generate_ai_reply(question: str, model: Optional[str]) -> AnswerResult:
     )
 
 
+def _client_ip(request: Request) -> Optional[str]:
+    """获取访客真实 IP：优先取反向代理头（若未来接入 nginx/CDN），否则取连接的源地址。
+    仅用于客服工作台展示参考，不作为区分用户的依据（同一 IP 下可能有多个真实客户）。"""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else None
+
+
 def _log_retrieval_only(conversation_id: int, question: str) -> None:
     """全人工模式下不调用 AI，但仍在后台记录题库检索结果，便于复核。"""
     try:
@@ -142,14 +154,14 @@ def set_mode(req: ModeRequest, agent: dict = Depends(require_admin)) -> dict:
 # ---------------- 客户端提问 ----------------
 
 @app.post("/api/ask", response_model=AskResponse)
-async def ask(req: AskRequest) -> AskResponse:
+async def ask(req: AskRequest, request: Request) -> AskResponse:
     question = req.message.strip()
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
 
     session_id = req.session_id or str(uuid.uuid4())
     mode = database.get_setting("global_mode", "auto")
-    conversation_id = database.create_conversation(session_id, question, mode)
+    conversation_id = database.create_conversation(session_id, question, mode, _client_ip(request))
 
     if mode == "auto":
         try:
@@ -238,6 +250,18 @@ def agent_queue(agent: dict = Depends(get_current_agent)) -> dict:
 @app.get("/api/agent/history")
 def agent_history(agent: dict = Depends(get_current_agent)) -> dict:
     return {"items": database.list_recent(50)}
+
+
+@app.get("/api/agent/sessions")
+def agent_sessions(agent: dict = Depends(get_current_agent)) -> dict:
+    """按用户（session_id）分组的对话列表：一个用户对应一个对话框，而不是每条问题单独一个。"""
+    return {"items": database.list_sessions()}
+
+
+@app.get("/api/agent/sessions/{session_id}")
+def agent_session_messages(session_id: str, agent: dict = Depends(get_current_agent)) -> dict:
+    """某个用户会话下的全部提问/回复，按时间顺序返回，用于渲染连续对话。"""
+    return {"items": database.list_session_messages(session_id)}
 
 
 @app.post("/api/agent/claim/{conversation_id}")
