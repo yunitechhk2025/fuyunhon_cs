@@ -79,6 +79,8 @@ def init_db() -> None:
         # 记录客户端 IP，便于客服工作台展示（分组仍以 session_id 为准，IP 仅作参考）
         _add_column_if_missing(conn, "conversations", "client_ip", "TEXT")
         _add_column_if_missing(conn, "conversations", "auto_send_at", "TEXT")
+        # 记录本次提问针对的产品（不同产品各自有独立题库），便于客服区分处理
+        _add_column_if_missing(conn, "conversations", "product", "TEXT")
 
         row = conn.execute("SELECT value FROM settings WHERE key = 'global_mode'").fetchone()
         if row is None:
@@ -167,12 +169,16 @@ def update_agent_password(agent_id: int, new_password: str) -> None:
 # ---------- conversations ----------
 
 def create_conversation(
-    session_id: str, question: str, mode_used: str, client_ip: Optional[str] = None
+    session_id: str,
+    question: str,
+    mode_used: str,
+    client_ip: Optional[str] = None,
+    product: Optional[str] = None,
 ) -> int:
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO conversations (session_id, question, mode_used, client_ip) VALUES (?, ?, ?, ?)",
-            (session_id, question, mode_used, client_ip),
+            "INSERT INTO conversations (session_id, question, mode_used, client_ip, product) VALUES (?, ?, ?, ?, ?)",
+            (session_id, question, mode_used, client_ip, product),
         )
         return cur.lastrowid
 
@@ -329,7 +335,7 @@ def list_sessions(limit: int = 200) -> list:
             session["visitor_no"] = visitor_no_map.get(session["session_id"], 0)
             last_row = conn.execute(
                 """
-                SELECT question, client_ip, mode_used, status
+                SELECT question, client_ip, mode_used, status, product
                 FROM conversations
                 WHERE session_id = ?
                 ORDER BY id DESC
@@ -341,6 +347,7 @@ def list_sessions(limit: int = 200) -> list:
                 session["last_question"] = last_row["question"]
                 session["last_mode"] = last_row["mode_used"]
                 session["last_status"] = last_row["status"]
+                session["last_product"] = last_row["product"]
             ip_row = conn.execute(
                 """
                 SELECT client_ip FROM conversations

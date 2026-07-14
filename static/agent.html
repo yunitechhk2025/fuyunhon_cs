@@ -300,6 +300,7 @@
 
       .conv-badges {
         display: flex;
+        flex-wrap: wrap;
         gap: 5px;
       }
 
@@ -344,6 +345,11 @@
       .badge.neutral {
         background: #eef1f7;
         color: #5c6579;
+      }
+
+      .badge.product {
+        background: #f1eaff;
+        color: #6b3fd4;
       }
 
       /* ---------- 右侧：会话详情（聊天窗） ---------- */
@@ -566,11 +572,21 @@
 
       .msg-meta {
         display: flex;
+        flex-wrap: wrap;
         justify-content: space-between;
+        align-items: center;
+        gap: 4px 8px;
         font-size: 11px;
         color: #a5aebd;
         margin: 0 0 4px 42px;
-        max-width: 66%;
+        max-width: 80%;
+      }
+
+      .msg-meta > span:last-child {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        justify-content: flex-end;
       }
 
       .compose-area {
@@ -961,7 +977,7 @@
         if (e.target === drawerMask) drawerMask.classList.remove("show");
       });
 
-      function enterApp(token, agent) {
+      async function enterApp(token, agent) {
         currentToken = token;
         currentAgent = agent;
         loginView.style.display = "none";
@@ -970,12 +986,35 @@
         adminAgentsSection.style.display = agent.role === "admin" ? "block" : "none";
         adminTimeoutSection.style.display = agent.role === "admin" ? "block" : "none";
         refreshMode();
+        await refreshProducts();
         refreshSessions();
         if (agent.role === "admin") {
           refreshAgents();
           refreshCollabTimeout();
         }
         connectWebSocket(token);
+      }
+
+      // ---------------- 产品（不同产品各自题库，展示每条消息所属产品） ----------------
+
+      let PRODUCT_META = {};
+
+      async function refreshProducts() {
+        try {
+          const res = await fetch("/api/products");
+          const data = await res.json();
+          PRODUCT_META = {};
+          (data.items || []).forEach((p) => {
+            PRODUCT_META[p.id] = p.label;
+          });
+        } catch (err) {
+          // 忽略，退化为直接显示产品 id
+        }
+      }
+
+      function productLabel(id) {
+        if (!id) return "未指定产品";
+        return PRODUCT_META[id] || id;
       }
 
       // ---------------- 工作模式（右上角快捷切换） ----------------
@@ -1092,7 +1131,7 @@
                     <span class="conv-time">${session.last_activity || ""}</span>
                   </div>
                   <div class="conv-question">${escapeHtml(session.last_question || "")}</div>
-                  <div class="conv-badges"><span class="badge neutral">共${session.message_count}条</span>${sessionStatusBadge(session)}</div>
+                  <div class="conv-badges"><span class="badge product">📦 ${escapeHtml(productLabel(session.last_product))}</span><span class="badge neutral">共${session.message_count}条</span>${sessionStatusBadge(session)}</div>
                 </div>
               </div>`;
           })
@@ -1148,12 +1187,13 @@
       function renderMessageBlock(item) {
         const modeBadge = `<span class="badge ${item.mode_used}">${MODE_META[item.mode_used]?.label || item.mode_used}</span>`;
         const statusBadge = `<span class="badge ${item.status}">${STATUS_LABEL[item.status] || item.status}</span>`;
+        const productBadge = `<span class="badge product">📦 ${escapeHtml(productLabel(item.product))}</span>`;
 
         let html = `
           <div class="bubble-block" data-msg-id="${item.id}">
             <div class="msg-meta">
               <span>#${item.id} · ${item.created_at || ""}</span>
-              <span>${modeBadge}${statusBadge}</span>
+              <span>${productBadge}${modeBadge}${statusBadge}</span>
             </div>
             <div class="bubble-row customer">
               <div class="bubble-avatar customer" title="客户">🧑</div>

@@ -23,11 +23,21 @@ VALID_MODES = {"auto", "manual", "collab"}
 DEFAULT_COLLAB_AUTO_SEND_SECONDS = 5
 AUTO_SEND_AGENT_NAME = "AI自动发送"
 
+# 目前有两款产品，各自独立题库。杜鹃花酸乳霜题库已建好；护手霜题库尚未整理，
+# excel 留空即代表"该产品暂无题库"——这类产品的所有提问都会被视为未命中，统一转人工。
+PRODUCTS: dict = {
+    "azelaic_cream": {"label": "澳洲肤润康 杜鹃花酸乳霜", "excel": DEFAULT_EXCEL},
+    "urea_hand_cream": {"label": "澳洲肤润康 10%尿素护手霜", "excel": None},
+}
+DEFAULT_PRODUCT = "azelaic_cream"
+NO_KB_TEXT = "亲，这款产品的常见问题库还在整理中，已为您转接人工客服，请稍候~"
+
 
 class AskRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
     model: Optional[str] = None
+    product: Optional[str] = None
 
 
 class AskResponse(BaseModel):
@@ -77,17 +87,30 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-bot = ExcelFaqRagBot(
-    excel_path=os.getenv("FAQ_EXCEL_PATH", str(BASE_DIR / DEFAULT_EXCEL)),
-    top_k=int(os.getenv("FAQ_TOP_K", "8")),
-    min_score=float(os.getenv("FAQ_MIN_SCORE", "0.1")),
-)
+# 每个有题库的产品各自一个 bot 实例；没有题库的产品不在此字典中出现。
+bots: dict = {}
 
 
 @app.on_event("startup")
 def startup() -> None:
     database.init_db()
-    bot.build_index()
+    for product_id, meta in PRODUCTS.items():
+        excel_name = meta.get("excel")
+        if not excel_name:
+            continue
+        default_path = str(BASE_DIR / excel_name)
+        # 兼容旧的 FAQ_EXCEL_PATH 环境变量，仅对默认产品（杜鹃花酸乳霜）生效
+        excel_path = os.getenv("FAQ_EXCEL_PATH", default_path) if product_id == DEFAULT_PRODUCT else default_path
+        if not Path(excel_path).exists():
+            print(f"[warn] 产品「{meta['label']}」配置的题库文件不存在，跳过: {excel_path}", file=sys.stderr)
+            continue
+        product_bot = ExcelFaqRagBot(
+            excel_path=excel_path,
+            top_k=int(os.getenv("FAQ_TOP_K", "8")),
+            min_score=float(os.getenv("FAQ_MIN_SCORE", "0.1")),
+        )
+        product_bot.build_index()
+        bots[product_id] = product_bot
 
 
 @app.get("/")
@@ -102,15 +125,37 @@ def agent_page() -> FileResponse:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "faq_count": len(bot.items)}
+    return {
+        "status": "ok",
+        "products": {pid: len(b.items) for pid, b in bots.items()},
+    }
+
+
+@app.get("/api/products")
+def get_products() -> dict:
+    return {
+        "items": [
+            {"id": pid, "label": meta["label"], "has_kb": pid in bots}
+            for pid, meta in PRODUCTS.items()
+        ],
+        "default": DEFAULT_PRODUCT,
+    }
+
+
+def _normalize_product(product: Optional[str]) -> str:
+    return product if product in PRODUCTS else DEFAULT_PRODUCT
 
 
 def _ai_model(model: Optional[str]) -> str:
     return model or os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
 
 
-def _generate_ai_reply(question: str, model: Optional[str]) -> AnswerResult:
-    return bot.answer(
+def _generate_ai_reply(product: str, question: str, model: Optional[str]) -> AnswerResult:
+    product_bot = bots.get(product)
+    if product_bot is None:
+        # 该产品还没有题库，直接判定未命中，不消耗 AI 调用
+        return AnswerResult(text=NO_KB_TEXT, matched=False, score=0.0)
+    return product_bot.answer(
         question,
         model=_ai_model(model),
         base_url=os.getenv("OPENAI_BASE_URL"),
@@ -144,11 +189,15 @@ async def _auto_send_after_timeout(conversation_id: int, ai_answer: str, timeout
         print(f"[warn] 协同模式自动发送失败: {exc}", file=sys.stderr)
 
 
-def _log_retrieval_only(conversation_id: int, question: str) -> None:
-    """全人工模式下不调用 AI，但仍在后台记录题库检索结果，便于复核。"""
+def _log_retrieval_only(conversation_id: int, product: str, question: str) -> None:
+    """全人工模式下不调用 AI 生成回复，但仍在后台记录题库检索结果，便于客服复核。"""
+    product_bot = bots.get(product)
+    if product_bot is None:
+        database.set_retrieval_info(conversation_id, False, None, None, 0.0)
+        return
     try:
-        ranked = bot.retrieve(question)
-        if ranked and ranked[0][0] >= bot.min_score:
+        ranked = product_bot.retrieve(question)
+        if ranked and ranked[0][0] >= product_bot.min_score:
             score, item = ranked[0]
             database.set_retrieval_info(conversation_id, True, item.question, item.answer, score)
         else:
@@ -196,41 +245,52 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
         raise HTTPException(status_code=400, detail="问题不能为空")
 
     session_id = req.session_id or str(uuid.uuid4())
+    product = _normalize_product(req.product)
     mode = database.get_setting("global_mode", "auto")
-    conversation_id = database.create_conversation(session_id, question, mode, _client_ip(request))
+    conversation_id = database.create_conversation(session_id, question, mode, _client_ip(request), product)
 
+    # 未命中题库（包括该产品尚未建立题库的情况）时，任何模式都不允许 AI 直接回复或编造答案，
+    # 统一转人工处理；只有确认命中题库时，才允许由 AI 直接回复（全AI模式）或生成建议（协同模式）。
     if mode == "auto":
+        result: Optional[AnswerResult] = None
         try:
-            result = _generate_ai_reply(question, req.model)
-            reply = result.text
-            database.set_retrieval_info(
-                conversation_id, result.matched, result.matched_question, result.matched_answer, result.score
-            )
+            result = _generate_ai_reply(product, question, req.model)
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] 全AI模式生成回复失败: {exc}", file=sys.stderr)
-            reply = "抱歉，暂时无法生成回复，请稍后再试或联系人工客服。"
-        database.mark_answered(conversation_id, reply)
-        return AskResponse(conversation_id=conversation_id, status="answered", answer=reply, mode=mode)
 
-    # manual / collab：不直接回复客户，进入人工队列
-    if mode == "collab":
+        if result is not None and result.matched:
+            database.set_retrieval_info(
+                conversation_id, True, result.matched_question, result.matched_answer, result.score
+            )
+            database.mark_answered(conversation_id, result.text)
+            return AskResponse(conversation_id=conversation_id, status="answered", answer=result.text, mode=mode)
+
+        database.set_retrieval_info(
+            conversation_id, False, None, None, result.score if result is not None else 0.0
+        )
+
+    elif mode == "collab":
         try:
-            result = _generate_ai_reply(question, req.model)
-            database.set_ai_suggestion(conversation_id, result.text, result.score)
+            result = _generate_ai_reply(product, question, req.model)
             database.set_retrieval_info(
                 conversation_id, result.matched, result.matched_question, result.matched_answer, result.score
             )
-            timeout = float(
-                database.get_setting("collab_auto_send_seconds", str(DEFAULT_COLLAB_AUTO_SEND_SECONDS))
-            )
-            auto_send_at = (datetime.utcnow() + timedelta(seconds=timeout)).strftime("%Y-%m-%dT%H:%M:%SZ")
-            database.set_auto_send_at(conversation_id, auto_send_at)
-            asyncio.create_task(_auto_send_after_timeout(conversation_id, result.text, timeout))
+            if result.matched:
+                database.set_ai_suggestion(conversation_id, result.text, result.score)
+                timeout = float(
+                    database.get_setting("collab_auto_send_seconds", str(DEFAULT_COLLAB_AUTO_SEND_SECONDS))
+                )
+                auto_send_at = (datetime.utcnow() + timedelta(seconds=timeout)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                database.set_auto_send_at(conversation_id, auto_send_at)
+                asyncio.create_task(_auto_send_after_timeout(conversation_id, result.text, timeout))
+            # 未命中：不生成 AI 建议、不安排自动发送，完全交给客服人工处理
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] 协同模式生成AI建议失败: {exc}", file=sys.stderr)
+            database.set_retrieval_info(conversation_id, False, None, None, 0.0)
     elif mode == "manual":
-        _log_retrieval_only(conversation_id, question)
+        _log_retrieval_only(conversation_id, product, question)
 
+    # 走到这里说明本次提问需要人工处理（全人工模式 / 协同或全AI模式下未命中题库）
     conversation = database.get_conversation(conversation_id)
     await manager.broadcast({"type": "new_question", "conversation": dict(conversation)})
 

@@ -119,6 +119,76 @@
         cursor: not-allowed;
         opacity: 0.55;
       }
+
+      .product-indicator {
+        margin: 8px 0 0;
+        font-size: 13px;
+        opacity: 0.95;
+      }
+
+      .product-indicator a {
+        color: #ffffff;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+
+      .picker-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(20, 30, 60, 0.45);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 50;
+        padding: 20px;
+      }
+
+      .picker-card {
+        background: #ffffff;
+        border-radius: 18px;
+        max-width: 380px;
+        width: 100%;
+        padding: 28px 26px;
+        box-shadow: 0 20px 60px rgba(20, 30, 60, 0.25);
+        text-align: center;
+      }
+
+      .picker-card h2 {
+        margin: 0 0 8px;
+        font-size: 19px;
+        color: #172033;
+      }
+
+      .picker-card p {
+        margin: 0 0 20px;
+        font-size: 13px;
+        color: #6b7686;
+      }
+
+      .picker-options {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .picker-btn {
+        width: 100%;
+        border: 1.5px solid #d7dfec;
+        background: #f7f9fd;
+        color: #172033;
+        border-radius: 14px;
+        padding: 14px 16px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        text-align: left;
+        transition: border-color 0.15s, background 0.15s;
+      }
+
+      .picker-btn:hover {
+        border-color: #2f6fed;
+        background: #eef4ff;
+      }
     </style>
   </head>
   <body>
@@ -127,10 +197,13 @@
         <header class="header">
           <h1>澳洲肤润康 AI 客服</h1>
           <p>智能匹配常见问题库，必要时将转接人工客服为您解答。</p>
+          <p id="product-indicator" class="product-indicator" style="display: none">
+            当前咨询：<span id="current-product-label"></span> · <a id="switch-product-link">切换产品</a>
+          </p>
         </header>
 
         <div id="messages" class="messages">
-          <div class="message bot">你好，我是澳洲肤润康 AI 客服。请输入客户问题，我会根据题库生成回复。</div>
+          <div class="message bot">你好，我是澳洲肤润康 AI 客服。请先选择您要咨询的产品，我再根据对应题库为您解答。</div>
         </div>
 
         <form id="form" class="composer">
@@ -140,11 +213,24 @@
       </section>
     </main>
 
+    <div id="product-picker-overlay" class="picker-overlay">
+      <div class="picker-card">
+        <h2>请选择您想咨询的产品</h2>
+        <p>选择后，我们会针对该产品的常见问题为您解答</p>
+        <div id="picker-options" class="picker-options"></div>
+      </div>
+    </div>
+
     <script>
       const form = document.getElementById("form");
       const input = document.getElementById("input");
       const send = document.getElementById("send");
       const messages = document.getElementById("messages");
+      const pickerOverlay = document.getElementById("product-picker-overlay");
+      const pickerOptions = document.getElementById("picker-options");
+      const productIndicator = document.getElementById("product-indicator");
+      const currentProductLabel = document.getElementById("current-product-label");
+      const switchProductLink = document.getElementById("switch-product-link");
 
       const SESSION_KEY = "fuyunhon_session_id";
       function getSessionId() {
@@ -165,11 +251,74 @@
         return el;
       }
 
+      // ---------------- 产品选择：不同产品各自有独立题库，提问前先确定产品 ----------------
+
+      const PRODUCT_KEY = "fuyunhon_product_id";
+      let products = [];
+      let currentProduct = null;
+
+      function getSavedProduct() {
+        return localStorage.getItem(PRODUCT_KEY);
+      }
+
+      function productLabel(id) {
+        const meta = products.find((p) => p.id === id);
+        return meta ? meta.label : id;
+      }
+
+      function renderPicker() {
+        pickerOptions.innerHTML = products
+          .map((p) => `<button type="button" class="picker-btn" data-id="${p.id}">${p.label}</button>`)
+          .join("");
+        pickerOptions.querySelectorAll(".picker-btn").forEach((btn) => {
+          btn.addEventListener("click", () => selectProduct(btn.getAttribute("data-id")));
+        });
+      }
+
+      function selectProduct(id, options) {
+        const silent = options && options.silent;
+        const isSwitch = !!currentProduct && currentProduct !== id;
+        currentProduct = id;
+        localStorage.setItem(PRODUCT_KEY, id);
+        currentProductLabel.textContent = productLabel(id);
+        productIndicator.style.display = "block";
+        pickerOverlay.style.display = "none";
+        if (isSwitch && !silent) {
+          addMessage(`已切换到「${productLabel(id)}」，请描述您想咨询的问题～`, "bot");
+        }
+        input.focus();
+      }
+
+      async function initProducts() {
+        try {
+          const res = await fetch("/api/products");
+          const data = await res.json();
+          products = data.items || [];
+        } catch (err) {
+          products = [];
+        }
+        renderPicker();
+
+        const saved = getSavedProduct();
+        if (saved && products.some((p) => p.id === saved)) {
+          selectProduct(saved, { silent: true });
+        } else {
+          pickerOverlay.style.display = "flex";
+        }
+      }
+
+      switchProductLink.addEventListener("click", (event) => {
+        event.preventDefault();
+        pickerOverlay.style.display = "flex";
+      });
+
+      initProducts();
+
       async function ask(message) {
         const res = await fetch("/api/ask", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, session_id: getSessionId() }),
+          body: JSON.stringify({ message, session_id: getSessionId(), product: currentProduct }),
         });
 
         const data = await res.json();
@@ -201,6 +350,10 @@
         event.preventDefault();
         const text = input.value.trim();
         if (!text) return;
+        if (!currentProduct) {
+          pickerOverlay.style.display = "flex";
+          return;
+        }
 
         input.value = "";
         addMessage(text, "user");
