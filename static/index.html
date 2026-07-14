@@ -35,6 +35,32 @@
         background: #ffffff;
       }
 
+      /* 大屏幕（浏览器全屏/放大到桌面宽度）下，聊天框不要被拉得又宽又扁，
+         居中显示一个高度受限、比例正常的对话框，更接近客服小窗口的效果。 */
+      @media (min-width: 640px) {
+        html,
+        body {
+          overflow: auto;
+        }
+
+        .page {
+          height: 100vh;
+          min-height: 100vh;
+          align-items: center;
+          justify-content: center;
+          background: #eef2f8;
+          padding: 24px;
+        }
+
+        .chat {
+          width: 100%;
+          max-width: 480px;
+          height: min(720px, 100%);
+          border-radius: 20px;
+          box-shadow: 0 20px 60px rgba(20, 30, 60, 0.18);
+        }
+      }
+
       .header {
         padding: 20px 24px;
         border-bottom: 1px solid #e8edf5;
