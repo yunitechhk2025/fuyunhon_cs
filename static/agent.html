@@ -260,10 +260,6 @@
         background: linear-gradient(135deg, #ffb020, #ff8a3d);
       }
 
-      .conv-avatar.claimed {
-        background: linear-gradient(135deg, #2f6fed, #5b8cff);
-      }
-
       .conv-avatar.answered {
         background: linear-gradient(135deg, #25b8a8, #1a7d3a);
       }
@@ -336,8 +332,8 @@
       }
 
       .badge.claimed {
-        background: #eaf1ff;
-        color: #2f6fed;
+        background: #fff4e0;
+        color: #b8860b;
       }
 
       .badge.answered {
@@ -771,7 +767,6 @@
           <div class="filter-tabs" id="filter-tabs">
             <div class="filter-tab active" data-filter="all">全部</div>
             <div class="filter-tab" data-filter="pending">待处理</div>
-            <div class="filter-tab" data-filter="claimed">已认领</div>
             <div class="filter-tab" data-filter="answered">已回复</div>
           </div>
           <div class="conv-list" id="conv-list"></div>
@@ -858,7 +853,9 @@
         collab: { label: "人机协同模式", desc: "AI 生成建议答案，客服审核后再发送" },
       };
 
-      const STATUS_LABEL = { pending: "待处理", claimed: "已认领", answered: "已回复" };
+      // 目前只有一个客服账号，"认领"这个多人协作概念对状态展示没有意义，
+      // 统一只区分"待处理"和"已回复"两种状态（claimed 在底层仍然存在，只是不再单独展示）。
+      const STATUS_LABEL = { pending: "待处理", claimed: "待处理", answered: "已回复" };
 
       let currentAgent = null;
       let currentToken = null;
@@ -1048,8 +1045,7 @@
       // ---------------- 会话列表（按用户 session_id 分组，一个用户一个对话框） ----------------
 
       function avatarClassFor(session) {
-        if (session.pending_count > 0) return "pending";
-        if (session.claimed_count > 0) return "claimed";
+        if (session.pending_count > 0 || session.claimed_count > 0) return "pending";
         return "answered";
       }
 
@@ -1062,19 +1058,16 @@
       }
 
       function sessionStatusBadge(session) {
-        if (session.pending_count > 0) {
-          return `<span class="badge pending">${session.pending_count} 条待处理</span>`;
-        }
-        if (session.claimed_count > 0) {
-          return `<span class="badge claimed">处理中</span>`;
+        const unresolved = (session.pending_count || 0) + (session.claimed_count || 0);
+        if (unresolved > 0) {
+          return `<span class="badge pending">${unresolved} 条待处理</span>`;
         }
         return `<span class="badge answered">已回复</span>`;
       }
 
       function matchesFilter(session) {
         if (activeFilter === "all") return true;
-        if (activeFilter === "pending") return session.pending_count > 0;
-        if (activeFilter === "claimed") return session.pending_count === 0 && session.claimed_count > 0;
+        if (activeFilter === "pending") return session.pending_count > 0 || session.claimed_count > 0;
         if (activeFilter === "answered") return session.pending_count === 0 && session.claimed_count === 0;
         return true;
       }

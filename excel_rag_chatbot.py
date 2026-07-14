@@ -84,9 +84,13 @@ class ExcelFaqRagBot:
         if question_col is None or answer_col is None:
             return []
 
+        # 题库表格里偶尔会有"（同31的答案）"这类内部编辑备注（甚至偶尔打错成"囘"），
+        # 这只是维护者留给自己看的交叉引用标记，客服/客户不需要看到，直接清理掉。
+        note_pattern = re.compile(r"[（(]\s*[同囘]\S{0,10}答案\s*[）)]")
+
         items: List[FaqItem] = []
         for idx, row in df.iterrows():
-            question = str(row.get(question_col, "")).strip()
+            question = note_pattern.sub("", str(row.get(question_col, "")).strip()).strip()
             answer = str(row.get(answer_col, "")).strip()
             serial = str(row.get(serial_col, "")).strip() if serial_col else ""
 
