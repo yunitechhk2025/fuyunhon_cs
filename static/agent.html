@@ -253,6 +253,7 @@
         flex-shrink: 0;
         padding: 0 2px;
         overflow: hidden;
+        box-shadow: 0 2px 5px rgba(20, 30, 60, 0.12);
       }
 
       .conv-avatar.pending {
@@ -410,24 +411,26 @@
       }
 
       .bubble-avatar {
-        width: 32px;
-        height: 32px;
+        width: 34px;
+        height: 34px;
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 12px;
+        font-size: 15px;
         font-weight: 700;
         color: #fff;
         flex-shrink: 0;
+        box-shadow: 0 2px 6px rgba(20, 30, 60, 0.14);
+        border: 2px solid #fff;
       }
 
       .bubble-avatar.customer {
-        background: #9aa5bd;
+        background: linear-gradient(135deg, #9aa5bd, #6b7690);
       }
 
       .bubble-avatar.agent {
-        background: #2f6fed;
+        background: linear-gradient(135deg, #2f6fed, #25b8a8);
       }
 
       .bubble {
@@ -438,6 +441,7 @@
         font-size: 14px;
         white-space: pre-wrap;
         word-break: break-word;
+        box-shadow: 0 1px 4px rgba(20, 30, 60, 0.06);
       }
 
       .bubble.customer {
@@ -447,7 +451,7 @@
       }
 
       .bubble.agent {
-        background: #2f6fed;
+        background: linear-gradient(135deg, #2f6fed, #4a80f0);
         color: #fff;
         border-top-right-radius: 4px;
       }
@@ -965,7 +969,7 @@
         currentAgent = agent;
         loginView.style.display = "none";
         mainView.style.display = "flex";
-        whoName.textContent = `${agent.displayName}（${agent.role === "admin" ? "管理员" : "客服"}）`;
+        whoName.textContent = `🎧 ${agent.displayName}（${agent.role === "admin" ? "管理员" : "客服"}）`;
         adminAgentsSection.style.display = agent.role === "admin" ? "block" : "none";
         adminTimeoutSection.style.display = agent.role === "admin" ? "block" : "none";
         refreshMode();
@@ -1159,7 +1163,7 @@
               <span>${modeBadge}${statusBadge}</span>
             </div>
             <div class="bubble-row customer">
-              <div class="bubble-avatar customer">客</div>
+              <div class="bubble-avatar customer" title="客户">🧑</div>
               <div class="bubble customer">${escapeHtml(item.question)}</div>
             </div>
             ${renderIntentBlock(item, item.status === "answered" ? "题库中暂无对应说明。" : "题库中暂无对应说明，请客服根据实际情况人工回复，或补充题库后重新检索。")}`;
@@ -1172,7 +1176,7 @@
           html += `
             <div class="bubble-row agent">
               <div class="bubble agent">${escapeHtml(item.final_answer || "")}</div>
-              <div class="bubble-avatar agent" title="${autoSent ? escapeHtml(item.answered_by_name) : "客服"}">${autoSent ? "AI" : "客服"}</div>
+              <div class="bubble-avatar agent" title="${autoSent ? escapeHtml(item.answered_by_name) : "客服"}">${autoSent ? "🤖" : "🎧"}</div>
             </div>`;
         } else {
           if (item.ai_suggested_answer) {
