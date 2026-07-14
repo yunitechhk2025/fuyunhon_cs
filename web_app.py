@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import uuid
@@ -18,6 +19,8 @@ from ws_manager import manager
 DEFAULT_EXCEL = "2026.01.26_肤润康-常见咨询问题_v2(1).xls"
 DEFAULT_MODEL = "qwen3.6-flash"
 VALID_MODES = {"auto", "manual", "collab"}
+DEFAULT_COLLAB_AUTO_SEND_SECONDS = 5
+AUTO_SEND_AGENT_NAME = "AI自动发送"
 
 
 class AskRequest(BaseModel):
@@ -44,6 +47,10 @@ class AnswerRequest(BaseModel):
 
 class ModeRequest(BaseModel):
     mode: str
+
+
+class CollabTimeoutRequest(BaseModel):
+    seconds: float
 
 
 class CreateAgentRequest(BaseModel):
@@ -122,6 +129,20 @@ def _client_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
 
 
+async def _auto_send_after_timeout(conversation_id: int, ai_answer: str, timeout: float) -> None:
+    """人机协同模式下，若客服在超时时间内还没有认领处理，则自动把 AI 建议发送给客户，
+    避免客户长时间等待；一旦客服已认领（状态不再是 pending），则尊重人工处理，不再自动发送。"""
+    try:
+        await asyncio.sleep(timeout)
+        conversation = database.get_conversation(conversation_id)
+        if conversation is None or conversation["status"] != "pending":
+            return
+        database.mark_answered(conversation_id, ai_answer, answered_by=None, answered_by_name=AUTO_SEND_AGENT_NAME)
+        await manager.broadcast({"type": "answered", "id": conversation_id})
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] 协同模式自动发送失败: {exc}", file=sys.stderr)
+
+
 def _log_retrieval_only(conversation_id: int, question: str) -> None:
     """全人工模式下不调用 AI，但仍在后台记录题库检索结果，便于复核。"""
     try:
@@ -149,6 +170,20 @@ def set_mode(req: ModeRequest, agent: dict = Depends(require_admin)) -> dict:
         raise HTTPException(status_code=400, detail="模式必须是 auto / manual / collab 之一")
     database.set_setting("global_mode", req.mode)
     return {"mode": req.mode}
+
+
+@app.get("/api/collab-timeout")
+def get_collab_timeout() -> dict:
+    seconds = float(database.get_setting("collab_auto_send_seconds", str(DEFAULT_COLLAB_AUTO_SEND_SECONDS)))
+    return {"seconds": seconds}
+
+
+@app.post("/api/collab-timeout")
+def set_collab_timeout(req: CollabTimeoutRequest, agent: dict = Depends(require_admin)) -> dict:
+    if req.seconds < 1 or req.seconds > 300:
+        raise HTTPException(status_code=400, detail="超时时间需在 1-300 秒之间")
+    database.set_setting("collab_auto_send_seconds", str(req.seconds))
+    return {"seconds": req.seconds}
 
 
 # ---------------- 客户端提问 ----------------
@@ -184,6 +219,10 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
             database.set_retrieval_info(
                 conversation_id, result.matched, result.matched_question, result.matched_answer, result.score
             )
+            timeout = float(
+                database.get_setting("collab_auto_send_seconds", str(DEFAULT_COLLAB_AUTO_SEND_SECONDS))
+            )
+            asyncio.create_task(_auto_send_after_timeout(conversation_id, result.text, timeout))
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] 协同模式生成AI建议失败: {exc}", file=sys.stderr)
     elif mode == "manual":

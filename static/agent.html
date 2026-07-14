@@ -122,6 +122,42 @@
         background: rgba(255, 255, 255, 0.32);
       }
 
+      .mode-switch {
+        display: flex;
+        gap: 4px;
+        background: rgba(255, 255, 255, 0.16);
+        padding: 3px;
+        border-radius: 10px;
+      }
+
+      .mode-switch-btn {
+        border: 0;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.85);
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .mode-switch-btn:hover {
+        background: rgba(255, 255, 255, 0.18);
+      }
+
+      .mode-switch-btn.active {
+        background: #fff;
+        color: #2f6fed;
+        font-weight: 700;
+      }
+
+      .mode-switch-readonly {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.92);
+        background: rgba(255, 255, 255, 0.16);
+        padding: 7px 13px;
+        border-radius: 10px;
+      }
+
       .conn-dot {
         width: 8px;
         height: 8px;
@@ -152,36 +188,10 @@
         min-height: 0;
       }
 
-      .sidebar-toolbar {
-        padding: 12px 16px;
-        border-bottom: 1px solid #eef1f7;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-      }
-
-      .mode-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 12px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 600;
-        background: #eef3ff;
-        color: #2f6fed;
-        cursor: default;
-      }
-
-      .mode-chip.clickable {
-        cursor: pointer;
-      }
-
       .filter-tabs {
         display: flex;
         gap: 6px;
-        padding: 10px 16px 0;
+        padding: 12px 16px 0;
       }
 
       .filter-tab {
@@ -659,41 +669,6 @@
         font-size: 13px;
       }
 
-      .mode-options {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-
-      .mode-option {
-        border: 2px solid #e3e8f2;
-        border-radius: 12px;
-        padding: 12px 14px;
-        cursor: pointer;
-        transition: border-color 0.15s, background 0.15s;
-      }
-
-      .mode-option.active {
-        border-color: #2f6fed;
-        background: #eef3ff;
-      }
-
-      .mode-option.disabled {
-        cursor: default;
-        opacity: 0.7;
-      }
-
-      .mode-option strong {
-        display: block;
-        margin-bottom: 3px;
-        font-size: 14px;
-      }
-
-      .mode-option span {
-        font-size: 12px;
-        color: #6b7686;
-      }
-
       .agents-list {
         list-style: none;
         padding: 0;
@@ -761,6 +736,7 @@
         <h1>澳洲肤润康 客服工作台</h1>
         <div class="who">
           <span><span class="conn-dot" id="conn-dot"></span><span id="conn-text">连接中...</span></span>
+          <div class="mode-switch" id="mode-switch"></div>
           <span id="who-name"></span>
           <button id="settings-btn">工作台设置</button>
           <button id="logout-btn">退出登录</button>
@@ -769,9 +745,6 @@
 
       <div class="app-layout">
         <div class="sidebar">
-          <div class="sidebar-toolbar">
-            <span class="mode-chip" id="current-mode-chip">当前模式：--</span>
-          </div>
           <div class="filter-tabs" id="filter-tabs">
             <div class="filter-tab active" data-filter="all">全部</div>
             <div class="filter-tab" data-filter="pending">待处理</div>
@@ -790,8 +763,26 @@
     <div class="drawer-mask" id="drawer-mask">
       <div class="drawer">
         <button class="drawer-close" id="drawer-close">关闭</button>
-        <h3>工作模式</h3>
-        <div class="mode-options" id="mode-options"></div>
+        <h3>工作台设置</h3>
+
+        <div id="admin-timeout-section" style="display: none;">
+          <h4>人机协同：AI 建议自动发送</h4>
+          <p style="font-size: 12px; color: #94a1b8; margin: 0 0 10px; line-height: 1.6;">
+            人机协同模式下，如果客服在以下秒数内还没有认领处理，系统会自动把 AI
+            建议的回复直接发给客户，避免客户等待过久；一旦客服认领，则以客服的处理为准，不会再自动发送。
+          </p>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input
+              id="collab-timeout-input"
+              type="number"
+              min="1"
+              max="300"
+              style="width: 100px; padding: 9px 10px; border: 1px solid #d7dfec; border-radius: 8px; font-size: 13px;"
+            />
+            <span style="font-size: 13px; color: #6b7686;">秒</span>
+            <button class="btn btn-primary" id="save-timeout-btn">保存</button>
+          </div>
+        </div>
 
         <div id="admin-agents-section" style="display: none;">
           <h4>客服账号管理（管理员）</h4>
@@ -825,11 +816,13 @@
       const convList = document.getElementById("conv-list");
       const filterTabs = document.getElementById("filter-tabs");
       const threadEl = document.getElementById("thread");
-      const currentModeChip = document.getElementById("current-mode-chip");
+      const modeSwitchEl = document.getElementById("mode-switch");
       const settingsBtn = document.getElementById("settings-btn");
       const drawerMask = document.getElementById("drawer-mask");
       const drawerClose = document.getElementById("drawer-close");
-      const modeOptions = document.getElementById("mode-options");
+      const adminTimeoutSection = document.getElementById("admin-timeout-section");
+      const collabTimeoutInput = document.getElementById("collab-timeout-input");
+      const saveTimeoutBtn = document.getElementById("save-timeout-btn");
       const adminAgentsSection = document.getElementById("admin-agents-section");
       const agentsList = document.getElementById("agents-list");
       const toastEl = document.getElementById("toast");
@@ -955,53 +948,79 @@
         mainView.style.display = "flex";
         whoName.textContent = `${agent.displayName}（${agent.role === "admin" ? "管理员" : "客服"}）`;
         adminAgentsSection.style.display = agent.role === "admin" ? "block" : "none";
+        adminTimeoutSection.style.display = agent.role === "admin" ? "block" : "none";
         refreshMode();
         refreshSessions();
-        if (agent.role === "admin") refreshAgents();
+        if (agent.role === "admin") {
+          refreshAgents();
+          refreshCollabTimeout();
+        }
         connectWebSocket(token);
       }
 
-      // ---------------- 工作模式 ----------------
+      // ---------------- 工作模式（右上角快捷切换） ----------------
 
       async function refreshMode() {
         const data = await apiFetch("/api/mode");
         currentMode = data.mode;
-        currentModeChip.textContent = `当前模式：${MODE_META[currentMode]?.label || currentMode}`;
-        renderModeOptions();
+        renderModeSwitch();
       }
 
-      function renderModeOptions() {
+      function renderModeSwitch() {
         const isAdmin = currentAgent && currentAgent.role === "admin";
-        modeOptions.innerHTML = Object.entries(MODE_META)
+
+        if (!isAdmin) {
+          modeSwitchEl.innerHTML = `<span class="mode-switch-readonly">当前模式：${MODE_META[currentMode]?.label || currentMode}</span>`;
+          return;
+        }
+
+        modeSwitchEl.innerHTML = Object.entries(MODE_META)
           .map(([key, meta]) => {
             const active = key === currentMode ? "active" : "";
-            const disabledClass = isAdmin ? "" : "disabled";
-            return `
-              <div class="mode-option ${active} ${disabledClass}" data-mode="${key}">
-                <strong>${meta.label}</strong>
-                <span>${meta.desc}</span>
-              </div>`;
+            return `<button class="mode-switch-btn ${active}" data-mode="${key}" title="${escapeHtml(meta.desc)}">${meta.label}</button>`;
           })
           .join("");
 
-        if (isAdmin) {
-          modeOptions.querySelectorAll(".mode-option").forEach((el) => {
-            el.addEventListener("click", async () => {
-              const mode = el.getAttribute("data-mode");
-              if (mode === currentMode) return;
-              try {
-                await apiFetch("/api/mode", { method: "POST", body: JSON.stringify({ mode }) });
-                currentMode = mode;
-                currentModeChip.textContent = `当前模式：${MODE_META[currentMode]?.label || currentMode}`;
-                renderModeOptions();
-                showToast(`已切换为：${MODE_META[mode].label}`);
-              } catch (err) {
-                showToast(err.message);
-              }
-            });
+        modeSwitchEl.querySelectorAll(".mode-switch-btn").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const mode = btn.getAttribute("data-mode");
+            if (mode === currentMode) return;
+            try {
+              await apiFetch("/api/mode", { method: "POST", body: JSON.stringify({ mode }) });
+              currentMode = mode;
+              renderModeSwitch();
+              showToast(`已切换为：${MODE_META[mode].label}`);
+            } catch (err) {
+              showToast(err.message);
+            }
           });
+        });
+      }
+
+      // ---------------- 人机协同：AI 建议自动发送超时 ----------------
+
+      async function refreshCollabTimeout() {
+        try {
+          const data = await apiFetch("/api/collab-timeout");
+          collabTimeoutInput.value = data.seconds;
+        } catch (err) {
+          // ignore
         }
       }
+
+      saveTimeoutBtn.addEventListener("click", async () => {
+        const seconds = Number(collabTimeoutInput.value);
+        if (!seconds || seconds < 1 || seconds > 300) {
+          showToast("请输入 1-300 之间的秒数");
+          return;
+        }
+        try {
+          await apiFetch("/api/collab-timeout", { method: "POST", body: JSON.stringify({ seconds }) });
+          showToast("已保存自动发送时间设置");
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
 
       // ---------------- 会话列表（按用户 session_id 分组，一个用户一个对话框） ----------------
 
@@ -1130,10 +1149,11 @@
         const isClaimedByOther = item.claimed_by && !isMine;
 
         if (item.status === "answered") {
+          const autoSent = !item.answered_by && item.answered_by_name;
           html += `
             <div class="bubble-row agent">
               <div class="bubble agent">${escapeHtml(item.final_answer || "")}</div>
-              <div class="bubble-avatar agent">客服</div>
+              <div class="bubble-avatar agent" title="${autoSent ? escapeHtml(item.answered_by_name) : "客服"}">${autoSent ? "AI" : "客服"}</div>
             </div>`;
         } else if (isClaimedByOther) {
           html += `<div class="thread-note">客服「${escapeHtml(item.claimed_by_name || "")}」正在处理中...</div>`;
