@@ -85,9 +85,41 @@
         padding: 24px;
       }
 
+      .msg-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .msg-row.user {
+        justify-content: flex-end;
+      }
+
+      .msg-avatar {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 15px;
+        color: #ffffff;
+        border: 2px solid #ffffff;
+        box-shadow: 0 2px 6px rgba(20, 30, 60, 0.14);
+      }
+
+      .msg-avatar.bot {
+        background: linear-gradient(135deg, #2f6fed, #25b8a8);
+      }
+
+      .msg-avatar.user {
+        background: linear-gradient(135deg, #9aa5bd, #6b7690);
+      }
+
       .message {
         max-width: min(60%, 460px);
-        margin-bottom: 14px;
         padding: 10px 13px;
         border-radius: 14px;
         white-space: pre-wrap;
@@ -101,7 +133,6 @@
       }
 
       .user {
-        margin-left: auto;
         background: #2f6fed;
         color: #ffffff;
         border-top-right-radius: 4px;
@@ -229,7 +260,10 @@
         </header>
 
         <div id="messages" class="messages">
-          <div class="message bot">你好，我是澳洲肤润康 AI 客服。请先选择您要咨询的产品，我再根据对应题库为您解答。</div>
+          <div class="msg-row bot">
+            <div class="msg-avatar bot" title="AI客服">🤖</div>
+            <div class="message bot">你好，我是澳洲肤润康 AI 客服。请先选择您要咨询的产品，我再根据对应题库为您解答。</div>
+          </div>
         </div>
 
         <form id="form" class="composer">
@@ -269,12 +303,29 @@
       }
 
       function addMessage(text, role) {
-        const el = document.createElement("div");
-        el.className = `message ${role}`;
-        el.textContent = text;
-        messages.appendChild(el);
+        const row = document.createElement("div");
+        row.className = `msg-row ${role}`;
+
+        const avatar = document.createElement("div");
+        avatar.className = `msg-avatar ${role}`;
+        avatar.title = role === "user" ? "我" : "AI客服";
+        avatar.textContent = role === "user" ? "🧑" : "🤖";
+
+        const bubble = document.createElement("div");
+        bubble.className = `message ${role}`;
+        bubble.textContent = text;
+
+        if (role === "user") {
+          row.appendChild(bubble);
+          row.appendChild(avatar);
+        } else {
+          row.appendChild(avatar);
+          row.appendChild(bubble);
+        }
+
+        messages.appendChild(row);
         messages.scrollTop = messages.scrollHeight;
-        return el;
+        return bubble;
       }
 
       // ---------------- 产品选择：不同产品各自有独立题库，提问前先确定产品 ----------------
