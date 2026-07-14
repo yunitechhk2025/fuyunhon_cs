@@ -335,6 +335,8 @@ async def agent_answer(
     conversation = database.get_conversation(conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="对话不存在")
+    if conversation["status"] == "answered":
+        raise HTTPException(status_code=409, detail="该问题已被回复，请勿重复发送")
 
     database.mark_answered(conversation_id, answer_text, agent["id"], agent["display_name"])
     await manager.broadcast({"type": "answered", "id": conversation_id})

@@ -532,13 +532,6 @@
         outline: none;
       }
 
-      .thread-note {
-        margin: 6px 0 0 42px;
-        color: #94a1b8;
-        font-size: 13px;
-        font-style: italic;
-      }
-
       .countdown-note {
         margin: 6px 0 0 42px;
         max-width: 66%;
@@ -606,22 +599,14 @@
         justify-content: flex-end;
       }
 
-      .claim-bar {
-        margin: 6px 0 0 42px;
-        max-width: 66%;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
+      .compose-warn {
         background: #fff7ea;
         border: 1px dashed #ffb020;
-        border-radius: 12px;
-        padding: 10px 14px;
-      }
-
-      .claim-bar span {
+        border-radius: 10px;
+        padding: 8px 12px;
         color: #8a6d1a;
         font-size: 12px;
+        margin-bottom: 10px;
       }
 
       .btn {
@@ -1183,8 +1168,6 @@
               <div class="bubble agent">${escapeHtml(item.final_answer || "")}</div>
               <div class="bubble-avatar agent" title="${autoSent ? escapeHtml(item.answered_by_name) : "客服"}">${autoSent ? "AI" : "客服"}</div>
             </div>`;
-        } else if (isClaimedByOther) {
-          html += `<div class="thread-note">客服「${escapeHtml(item.claimed_by_name || "")}」正在处理中...</div>`;
         } else {
           if (item.ai_suggested_answer) {
             html += `
@@ -1199,7 +1182,8 @@
                 ⏳ 若无人认领，AI 建议将在 <span class="countdown-secs">--</span> 秒后自动发送给客户
               </div>`;
           }
-          html += composeAreaHtml(item, isMine);
+          // 无论是否已认领、无论哪种模式，都始终提供输入框，客服随时可以直接回复客户
+          html += composeAreaHtml(item, isMine, isClaimedByOther);
         }
 
         html += `</div>`;
@@ -1231,26 +1215,32 @@
         if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
       }
 
-      function composeAreaHtml(item, isMine) {
-        if (item.status === "pending") {
-          return `
-            <div class="claim-bar">
-              <span>该问题尚未被认领，认领后即可回复客户</span>
-              <button class="btn btn-primary" data-action="claim" data-id="${item.id}">认领此问题</button>
-            </div>`;
+      function composeAreaHtml(item, isMine, isClaimedByOther) {
+        // 不管当前是否已认领、认领人是谁，始终提供输入框：客服可以随时直接回复客户，
+        // "认领"只是一个可选的协作提示（让其他客服知道有人在处理），不是回复的前提条件。
+        const prefill = item.ai_suggested_answer || "";
+        let warnHtml = "";
+        let actionsHtml = "";
+
+        if (isClaimedByOther) {
+          warnHtml = `<div class="compose-warn">⚠️ 客服「${escapeHtml(item.claimed_by_name || "")}」正在处理该问题，如需回复请先与其确认，避免重复答复客户。</div>`;
+          actionsHtml = `<button class="btn btn-primary" data-action="answer" data-id="${item.id}">发送回复</button>`;
+        } else if (item.status === "claimed" && isMine) {
+          actionsHtml = `
+            <button class="btn btn-secondary" data-action="release" data-id="${item.id}">释放认领</button>
+            <button class="btn btn-primary" data-action="answer" data-id="${item.id}">发送回复</button>`;
+        } else {
+          actionsHtml = `
+            <button class="btn btn-secondary" data-action="claim" data-id="${item.id}">认领此问题</button>
+            <button class="btn btn-primary" data-action="answer" data-id="${item.id}">发送回复</button>`;
         }
-        if (item.status === "claimed" && isMine) {
-          const prefill = item.ai_suggested_answer || "";
-          return `
-            <div class="compose-area">
-              <textarea data-answer-input="${item.id}" placeholder="输入回复内容...">${escapeHtml(prefill)}</textarea>
-              <div class="compose-actions">
-                <button class="btn btn-secondary" data-action="release" data-id="${item.id}">释放认领</button>
-                <button class="btn btn-primary" data-action="answer" data-id="${item.id}">发送回复</button>
-              </div>
-            </div>`;
-        }
-        return "";
+
+        return `
+          <div class="compose-area">
+            ${warnHtml}
+            <textarea data-answer-input="${item.id}" placeholder="输入回复内容...">${escapeHtml(prefill)}</textarea>
+            <div class="compose-actions">${actionsHtml}</div>
+          </div>`;
       }
 
       function bindComposeActions() {
