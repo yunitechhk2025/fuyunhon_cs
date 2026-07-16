@@ -189,6 +189,60 @@
         border-color: #2f6fed;
         background: #eef4ff;
       }
+
+      /* 手机窄屏适配：整体已是全屏聊天布局，这里只需收紧间距/字号，
+         并把输入区改成"文本框在上、发送按钮独占一行"，避免小屏被挤变形。 */
+      @media (max-width: 480px) {
+        .header {
+          padding: 14px 16px;
+        }
+
+        .header h1 {
+          font-size: 18px;
+        }
+
+        .header p {
+          font-size: 12.5px;
+        }
+
+        .product-indicator {
+          font-size: 12px;
+        }
+
+        .messages {
+          padding: 14px;
+        }
+
+        .message {
+          max-width: 86%;
+          font-size: 14px;
+          padding: 11px 13px;
+        }
+
+        .composer {
+          flex-wrap: wrap;
+          padding: 10px 12px;
+        }
+
+        textarea {
+          min-height: 42px;
+          font-size: 14px;
+          flex-basis: 100%;
+        }
+
+        button {
+          width: 100%;
+          padding: 10px 0;
+        }
+
+        .picker-card {
+          padding: 20px 18px;
+        }
+
+        .picker-card h2 {
+          font-size: 17px;
+        }
+      }
     </style>
   </head>
   <body>

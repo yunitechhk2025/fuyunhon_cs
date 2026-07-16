@@ -33,7 +33,7 @@
       }
 
       .login-card {
-        width: 340px;
+        width: min(340px, calc(100vw - 40px));
         background: #fff;
         border-radius: 16px;
         padding: 32px;
@@ -120,6 +120,19 @@
 
       .topbar button:hover {
         background: rgba(255, 255, 255, 0.32);
+      }
+
+      .mobile-back-btn {
+        display: none;
+        border: 0;
+        background: #eef1f7;
+        color: #2f6fed;
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-size: 13px;
+        cursor: pointer;
+        margin-right: 10px;
+        flex-shrink: 0;
       }
 
       .mode-switch {
@@ -753,6 +766,115 @@
         opacity: 1;
         transform: translateY(0);
       }
+
+      /* ---------- 手机/窄屏适配 ---------- */
+      /* 桌面是"左侧会话列表 + 右侧对话详情"两栏布局，手机屏幕放不下，
+         改成跟聊天 App 一样：一次只显示一个面板，点会话进详情，详情里点"返回"回列表。 */
+      @media (max-width: 860px) {
+        .topbar {
+          flex-wrap: wrap;
+          gap: 8px;
+          padding: 10px 14px;
+        }
+
+        .topbar h1 {
+          font-size: 15px;
+          width: 100%;
+        }
+
+        .topbar .who {
+          width: 100%;
+          flex-wrap: wrap;
+          gap: 8px;
+          font-size: 12px;
+        }
+
+        .mode-switch-btn {
+          padding: 5px 9px;
+          font-size: 11px;
+        }
+
+        .app-layout {
+          position: relative;
+        }
+
+        .sidebar {
+          width: 100%;
+          min-width: 0;
+        }
+
+        .mobile-back-btn {
+          display: inline-flex;
+          align-items: center;
+        }
+
+        /* 用 .app-layout.thread-open 这个类，控制手机上到底显示列表还是详情 */
+        .app-layout.thread-open .sidebar {
+          display: none;
+        }
+
+        .app-layout:not(.thread-open) .thread {
+          display: none;
+        }
+
+        .thread-header {
+          padding: 12px 14px;
+        }
+
+        .thread-messages {
+          padding: 16px 14px;
+        }
+
+        .bubble {
+          max-width: 82%;
+        }
+
+        .bubble-avatar {
+          width: 30px;
+          height: 30px;
+          font-size: 13px;
+        }
+
+        .intent-wrap,
+        .draft-wrap,
+        .countdown-note,
+        .compose-area,
+        .msg-meta {
+          margin-left: 0;
+          max-width: 100%;
+        }
+
+        .drawer {
+          width: calc(100vw - 32px);
+          padding: 20px 18px;
+        }
+
+        .create-agent-form input,
+        .create-agent-form select {
+          min-width: 100%;
+        }
+
+        .toast {
+          left: 16px;
+          right: 16px;
+          top: 12px;
+        }
+      }
+
+      @media (max-width: 420px) {
+        .conv-item {
+          padding: 10px 12px;
+        }
+
+        .conv-question {
+          font-size: 12.5px;
+        }
+
+        .bubble {
+          font-size: 13.5px;
+          max-width: 88%;
+        }
+      }
     </style>
   </head>
   <body>
@@ -778,7 +900,7 @@
         </div>
       </div>
 
-      <div class="app-layout">
+      <div class="app-layout" id="app-layout">
         <div class="sidebar">
           <div class="filter-tabs" id="filter-tabs">
             <div class="filter-tab active" data-filter="all">全部</div>
@@ -850,6 +972,7 @@
       const convList = document.getElementById("conv-list");
       const filterTabs = document.getElementById("filter-tabs");
       const threadEl = document.getElementById("thread");
+      const appLayoutEl = document.getElementById("app-layout");
       const modeSwitchEl = document.getElementById("mode-switch");
       const settingsBtn = document.getElementById("settings-btn");
       const drawerMask = document.getElementById("drawer-mask");
@@ -1156,6 +1279,8 @@
       async function selectSession(sessionId) {
         selectedSessionId = sessionId;
         renderConvList();
+        // 手机上一次只显示一个面板：选中会话后切到详情视图，通过"返回列表"按钮可以切回去
+        appLayoutEl.classList.add("thread-open");
         threadEl.innerHTML = `<div class="thread-empty">正在加载对话...</div>`;
         await loadSessionMessages(sessionId);
       }
@@ -1242,9 +1367,12 @@
 
         const header = `
           <div class="thread-header">
-            <div>
-              <div class="title">客户会话 · ${escapeHtml(visitorLabel(session))}</div>
-              <div class="sub">共 ${session.message_count} 条提问 · 最近活跃 ${session.last_activity || ""}${session.client_ip ? ` · IP ${escapeHtml(session.client_ip)}` : ""}</div>
+            <div style="display: flex; align-items: center; min-width: 0;">
+              <button class="mobile-back-btn" id="mobile-back-btn" type="button">← 返回列表</button>
+              <div style="min-width: 0;">
+                <div class="title">客户会话 · ${escapeHtml(visitorLabel(session))}</div>
+                <div class="sub">共 ${session.message_count} 条提问 · 最近活跃 ${session.last_activity || ""}${session.client_ip ? ` · IP ${escapeHtml(session.client_ip)}` : ""}</div>
+              </div>
             </div>
           </div>`;
 
@@ -1253,6 +1381,11 @@
         threadEl.innerHTML = `${header}<div class="thread-messages" id="thread-messages-scroll">${messagesHtml}</div>`;
         bindComposeActions();
         updateCountdowns();
+
+        const backBtn = document.getElementById("mobile-back-btn");
+        if (backBtn) {
+          backBtn.addEventListener("click", () => appLayoutEl.classList.remove("thread-open"));
+        }
 
         const scrollEl = document.getElementById("thread-messages-scroll");
         if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
