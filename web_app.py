@@ -94,6 +94,10 @@ bots: dict = {}
 @app.on_event("startup")
 def startup() -> None:
     database.init_db()
+
+    top_k = int(os.getenv("FAQ_TOP_K", "8"))
+    min_score = float(os.getenv("FAQ_MIN_SCORE", "0.1"))
+
     for product_id, meta in PRODUCTS.items():
         excel_name = meta.get("excel")
         if not excel_name:
@@ -104,13 +108,20 @@ def startup() -> None:
         if not Path(excel_path).exists():
             print(f"[warn] 产品「{meta['label']}」配置的题库文件不存在，跳过: {excel_path}", file=sys.stderr)
             continue
-        product_bot = ExcelFaqRagBot(
-            excel_path=excel_path,
-            top_k=int(os.getenv("FAQ_TOP_K", "8")),
-            min_score=float(os.getenv("FAQ_MIN_SCORE", "0.1")),
-        )
+        product_bot = ExcelFaqRagBot(excel_path=excel_path, top_k=top_k, min_score=min_score)
         product_bot.build_index()
         bots[product_id] = product_bot
+
+    # 品牌类问题（如"是澳洲品牌？"）会被标记为 shared=True，属于跨产品共用问题：
+    # 无论客户当前选的是哪款产品，都应该能命中——即便该产品自己还没有专属题库。
+    shared_items = [it for b in bots.values() for it in b.items if it.shared]
+    if shared_items:
+        for product_id in PRODUCTS:
+            existing_bot = bots.get(product_id)
+            if existing_bot is not None:
+                existing_bot.load_extra_items(shared_items)
+            else:
+                bots[product_id] = ExcelFaqRagBot.from_items(shared_items, top_k=top_k, min_score=min_score)
 
 
 @app.get("/")

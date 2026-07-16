@@ -19,6 +19,9 @@ class FaqItem:
     serial: str
     question: str
     answer: str
+    # 跨产品共用的问题（例如品牌类问题"是澳洲品牌？"）：无论客户当前咨询的是哪款产品，
+    # 都应该能命中这一条，而不局限于某一款产品自己的题库。
+    shared: bool = False
 
     def kb_text(self) -> str:
         prefix = f"序号: {self.serial} | " if self.serial else ""
@@ -106,9 +109,20 @@ class ExcelFaqRagBot:
                     serial=serial,
                     question=question,
                     answer=answer,
+                    shared=self._is_shared_question(serial, question),
                 )
             )
         return items
+
+    # 品牌类问题（如"是澳洲品牌？"）不属于某一款具体产品，两款产品都应该能命中。
+    # 约定：以后在 Excel 的"序号/编号"列填写"公共"/"通用"/"共用"，即可标记为跨产品共用问题，
+    # 不需要改代码；下面这个集合只是兼容当前已有题库里、尚未按新约定标记的历史共用问题。
+    _SHARED_SERIAL_MARKERS = {"公共", "通用", "共用"}
+    _LEGACY_SHARED_QUESTIONS = {"是澳洲品牌？"}
+
+    @classmethod
+    def _is_shared_question(cls, serial: str, question: str) -> bool:
+        return serial.strip() in cls._SHARED_SERIAL_MARKERS or question.strip() in cls._LEGACY_SHARED_QUESTIONS
 
     def build_index(self) -> None:
         sheets = pd.read_excel(self.excel_path, sheet_name=None, header=None)
@@ -120,6 +134,32 @@ class ExcelFaqRagBot:
             raise ValueError("未识别到 FAQ 问答列（需要包含“咨询问题/解答”字段）。")
 
         self.items = items
+        self._finalize_index()
+
+    @classmethod
+    def from_items(cls, items: List[FaqItem], top_k: int = 8, min_score: float = 0.1) -> "ExcelFaqRagBot":
+        """不依赖 Excel 文件，直接用一批现成的 FaqItem 构建索引。
+        用于还没有自己专属题库、但需要共用跨产品问题（如品牌类问题）的产品。"""
+        bot = cls(excel_path="", top_k=top_k, min_score=min_score)
+        bot.items = list(items)
+        bot._finalize_index()
+        return bot
+
+    def load_extra_items(self, extra_items: List[FaqItem]) -> None:
+        """合并额外的问答条目（例如其他产品题库里标记为共用的问题），按内容去重后重建索引。"""
+        existing_keys = {(it.question, it.answer) for it in self.items}
+        added = False
+        for it in extra_items:
+            key = (it.question, it.answer)
+            if key in existing_keys:
+                continue
+            self.items.append(it)
+            existing_keys.add(key)
+            added = True
+        if added:
+            self._finalize_index()
+
+    def _finalize_index(self) -> None:
         # 问题权重更高，回答作为补充，提升短问命中率
         corpus = [f"{it.question} {it.question} {it.answer}" for it in self.items]
         self.doc_vectors = self.vectorizer.fit_transform(corpus)
