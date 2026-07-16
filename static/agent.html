@@ -1292,7 +1292,7 @@
           const scoreText = typeof item.match_score === "number" ? `${(item.match_score * 100).toFixed(0)}%` : "-";
           return `
             <div class="intent-wrap">
-              <span class="intent-badge hit">✨ AI 识别：命中题库问题（匹配度 ${scoreText}）</span>
+              <span class="intent-badge hit">✨ AI 识别：命中相关资料（匹配度 ${scoreText}）</span>
               <div class="intent-card">
                 <div class="q">${escapeHtml(item.matched_question || "")}</div>
                 <div>${escapeHtml(item.matched_answer || "")}</div>
@@ -1302,7 +1302,7 @@
         if (item.matched === 0) {
           return `
             <div class="intent-wrap">
-              <span class="intent-badge miss">⚠️ AI 识别：未命中题库</span>
+              <span class="intent-badge miss">⚠️ AI 识别：未找到匹配内容</span>
               <div class="intent-card">${missHint}</div>
             </div>`;
         }
@@ -1324,7 +1324,7 @@
               <div class="bubble-avatar customer" title="客户">🧑</div>
               <div class="bubble customer">${escapeHtml(item.question)}</div>
             </div>
-            ${renderIntentBlock(item, item.status === "answered" ? "题库中暂无对应说明。" : "题库中暂无对应说明，请客服根据实际情况人工回复，或补充题库后重新检索。")}`;
+            ${renderIntentBlock(item, item.status === "answered" ? "现有题库/资料中暂无对应说明。" : "现有题库/资料中暂无对应说明，请客服根据实际情况人工回复，或补充资料后重新检索。")}`;
 
         const isMine = item.claimed_by === currentAgent.id;
         const isClaimedByOther = item.claimed_by && !isMine;

@@ -14,20 +14,25 @@ from pydantic import BaseModel
 
 import database
 from auth import create_token, decode_token, get_current_agent, require_admin
+from doc_rag_chatbot import DocRagBot
 from excel_rag_chatbot import AnswerResult, ExcelFaqRagBot
 from ws_manager import manager
 
 DEFAULT_EXCEL = "2026.01.26_肤润康-常见咨询问题_v2(1).xls"
+UREA_DOC = "urea_hand_cream_info.md"
 DEFAULT_MODEL = "qwen3.6-flash"
 VALID_MODES = {"auto", "manual", "collab"}
 DEFAULT_COLLAB_AUTO_SEND_SECONDS = 5
 AUTO_SEND_AGENT_NAME = "AI自动发送"
 
-# 目前有两款产品，各自独立题库。杜鹃花酸乳霜题库已建好；护手霜题库尚未整理，
-# excel 留空即代表"该产品暂无题库"——这类产品的所有提问都会被视为未命中，统一转人工。
+# 两款产品用了两种不同的知识来源：
+# - 杜鹃花酸乳霜：现成的"问题-答案"题库（Excel），专业内容原文照搬，逐字不改写。
+# - 10%尿素护手霜：暂无题库，只有一份产品说明文档（doc），没有固定问答对，
+#   AI 需要现场组织语言回答，但内容必须严格限定在文档范围内——文档没提到的内容
+#   （如孕妇能否使用等）一律视为未命中，与题库场景未命中时的转人工规则完全一致。
 PRODUCTS: dict = {
     "azelaic_cream": {"label": "澳洲肤润康 杜鹃花酸乳霜", "excel": DEFAULT_EXCEL},
-    "urea_hand_cream": {"label": "澳洲肤润康 10%尿素护手霜", "excel": None},
+    "urea_hand_cream": {"label": "澳洲肤润康 10%尿素护手霜", "doc": UREA_DOC},
 }
 DEFAULT_PRODUCT = "azelaic_cream"
 NO_KB_TEXT = "亲，这款产品的常见问题库还在整理中，已为您转接人工客服，请稍候~"
@@ -100,17 +105,26 @@ def startup() -> None:
 
     for product_id, meta in PRODUCTS.items():
         excel_name = meta.get("excel")
-        if not excel_name:
-            continue
-        default_path = str(BASE_DIR / excel_name)
-        # 兼容旧的 FAQ_EXCEL_PATH 环境变量，仅对默认产品（杜鹃花酸乳霜）生效
-        excel_path = os.getenv("FAQ_EXCEL_PATH", default_path) if product_id == DEFAULT_PRODUCT else default_path
-        if not Path(excel_path).exists():
-            print(f"[warn] 产品「{meta['label']}」配置的题库文件不存在，跳过: {excel_path}", file=sys.stderr)
-            continue
-        product_bot = ExcelFaqRagBot(excel_path=excel_path, top_k=top_k, min_score=min_score)
-        product_bot.build_index()
-        bots[product_id] = product_bot
+        doc_name = meta.get("doc")
+
+        if excel_name:
+            default_path = str(BASE_DIR / excel_name)
+            # 兼容旧的 FAQ_EXCEL_PATH 环境变量，仅对默认产品（杜鹃花酸乳霜）生效
+            excel_path = os.getenv("FAQ_EXCEL_PATH", default_path) if product_id == DEFAULT_PRODUCT else default_path
+            if not Path(excel_path).exists():
+                print(f"[warn] 产品「{meta['label']}」配置的题库文件不存在，跳过: {excel_path}", file=sys.stderr)
+                continue
+            excel_bot = ExcelFaqRagBot(excel_path=excel_path, top_k=top_k, min_score=min_score)
+            excel_bot.build_index()
+            bots[product_id] = excel_bot
+        elif doc_name:
+            doc_path = str(BASE_DIR / doc_name)
+            if not Path(doc_path).exists():
+                print(f"[warn] 产品「{meta['label']}」配置的说明文档不存在，跳过: {doc_path}", file=sys.stderr)
+                continue
+            doc_bot = DocRagBot(doc_path=doc_path, top_k=4, min_score=float(os.getenv("DOC_MIN_SCORE", "0.15")))
+            doc_bot.build_index()
+            bots[product_id] = doc_bot
 
     # 品牌类问题（如"是澳洲品牌？"）会被标记为 shared=True，属于跨产品共用问题：
     # 无论客户当前选的是哪款产品，都应该能命中——即便该产品自己还没有专属题库。
