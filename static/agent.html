@@ -20,6 +20,14 @@
         overflow: hidden;
       }
 
+      /* 手机浏览器地址栏/工具栏动态伸缩会导致 100vh 计算不稳定，可能把页面顶部内容顶出可视区域。
+         用 position: fixed + inset: 0 把登录页和主界面钉死在可视窗口内，不参与文档滚动。 */
+      #login-view,
+      #main-view {
+        position: fixed;
+        inset: 0;
+      }
+
       button {
         font-family: inherit;
       }
@@ -29,7 +37,6 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 100vh;
       }
 
       .login-card {
@@ -82,7 +89,6 @@
       /* ---------- 主体：整体骨架 ---------- */
       #main-view {
         display: none;
-        height: 100vh;
         flex-direction: column;
       }
 

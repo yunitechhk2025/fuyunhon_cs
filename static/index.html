@@ -21,8 +21,12 @@
       }
 
       .page {
-        width: 100vw;
-        height: 100vh;
+        /* 手机浏览器的地址栏/工具栏会动态伸缩，导致 100vh 计算不稳定，
+           曾出现过页面被意外滚动、顶部标题被顶到可视区域外的问题（尤其点击输入框后）。
+           用 position: fixed + inset: 0 把整个应用钉死在可视窗口内，不参与文档滚动，从根源上避免这个问题；
+           不再额外指定 width/height，避免和 inset 的四个偏移量互相冲突。 */
+        position: fixed;
+        inset: 0;
         display: flex;
       }
 
