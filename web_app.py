@@ -54,6 +54,9 @@ class AskResponse(BaseModel):
     status: str  # 'answered' | 'pending'
     answer: Optional[str] = None
     mode: str
+    # 仅在 status='pending' 且为人机协同模式时可能为 True：
+    # 表示题库已命中、AI 已生成建议并已安排自动发送倒计时，客户此时应看到"AI 思考中"而不是"转人工"提示。
+    matched: bool = False
 
 
 class LoginRequest(BaseModel):
@@ -485,6 +488,9 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
     # notify_reason 非空则说明本次提问需要邮件提醒客服：全AI/协同模式仅在题库未命中时提醒，
     # 全人工模式因为从不由 AI 直接作答，每一条新问题都需要提醒。
     notify_reason: Optional[str] = None
+    # pending_matched 仅人机协同模式下可能为 True：题库已命中、AI 已生成建议并安排好自动发送倒计时，
+    # 客户此时应看到"AI 思考中"而不是"转人工"提示；其余情况（未命中/全人工）都应显示转人工提示。
+    pending_matched = False
 
     if mode == "auto":
         result: Optional[AnswerResult] = None
@@ -519,6 +525,7 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
                 auto_send_at = (datetime.utcnow() + timedelta(seconds=timeout)).strftime("%Y-%m-%dT%H:%M:%SZ")
                 database.set_auto_send_at(conversation_id, auto_send_at)
                 asyncio.create_task(_auto_send_after_timeout(conversation_id, result.text, timeout))
+                pending_matched = True
             else:
                 # 未命中：不生成 AI 建议、不安排自动发送，完全交给客服人工处理
                 notify_reason = "题库未命中"
@@ -537,7 +544,9 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
     if notify_reason:
         asyncio.create_task(_notify_agent_unresolved(conversation_id, product, question, mode, notify_reason))
 
-    return AskResponse(conversation_id=conversation_id, status="pending", answer=None, mode=mode)
+    return AskResponse(
+        conversation_id=conversation_id, status="pending", answer=None, mode=mode, matched=pending_matched
+    )
 
 
 @app.get("/api/conversations/{conversation_id}")

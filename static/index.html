@@ -436,7 +436,11 @@
           if (data.status === "answered") {
             loading.textContent = data.answer;
           } else {
-            loading.textContent = "已收到您的问题，正在为您转接人工客服，请稍候...";
+            // 人机协同模式下，若题库已命中（AI 已生成建议、进入自动发送倒计时），
+            // 客户看到的应该是"AI 思考中"，不是"转人工"提示——只有未命中时才是真正转人工。
+            loading.textContent = data.matched
+              ? "AI 正在思考您的问题，请稍候..."
+              : "已收到您的问题，正在为您转接人工客服，请稍候...";
             await pollAnswer(data.conversation_id, loading);
           }
         } catch (err) {
