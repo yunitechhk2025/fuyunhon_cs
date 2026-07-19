@@ -15,7 +15,7 @@ from pydantic import BaseModel
 import database
 from auth import create_token, decode_token, get_current_agent, require_admin
 from doc_rag_chatbot import DocRagBot
-from email_utils import DEFAULT_NOTIFY_EMAIL_TO, send_email
+from email_utils import DEFAULT_NOTIFY_EMAIL_TO, send_email, send_test_email
 from excel_rag_chatbot import AnswerResult, ExcelFaqRagBot
 from ws_manager import manager
 
@@ -80,6 +80,21 @@ class ReminderSettingsRequest(BaseModel):
 
 class NotifyEmailRequest(BaseModel):
     email: str
+
+
+class SmtpSettingsRequest(BaseModel):
+    host: str
+    port: int = 587
+    username: Optional[str] = None
+    # 密码留空表示"不修改已保存的密码"，避免每次改其他字段都要重新输入一遍密码。
+    password: Optional[str] = None
+    sender: Optional[str] = None
+    use_tls: bool = True
+    use_ssl: bool = False
+
+
+class SmtpTestRequest(BaseModel):
+    to: Optional[str] = None
 
 
 class CreateAgentRequest(BaseModel):
@@ -236,6 +251,24 @@ def _notify_recipient() -> Optional[str]:
     return email.strip() if email and email.strip() else None
 
 
+def _smtp_overrides() -> dict:
+    """SMTP 发信配置以后台「工作台设置」里保存的为准；管理员还没在后台配置过（没填服务器地址）时，
+    返回空字典，交给 email_utils 自己回退到环境变量 SMTP_* 的默认值——这样服务器换了新环境、
+    还没来得及在后台配置之前，.env 里的旧配置依然可以继续工作，不会突然失效。"""
+    host = database.get_setting("smtp_host")
+    if not host:
+        return {}
+    return {
+        "host": host,
+        "port": int(database.get_setting("smtp_port", "587") or "587"),
+        "username": database.get_setting("smtp_username") or None,
+        "password": database.get_setting("smtp_password") or None,
+        "sender": database.get_setting("smtp_from") or None,
+        "use_tls": database.get_setting("smtp_use_tls", "true") == "true",
+        "use_ssl": database.get_setting("smtp_use_ssl", "false") == "true",
+    }
+
+
 async def _notify_agent_unresolved(conversation_id: int, product: str, question: str, mode: str, reason: str) -> None:
     """客户的问题需要人工处理时（题库未命中，或全人工模式下的任意问题），邮件提醒客服/管理员。
     邮件发送是阻塞的网络调用，用线程池执行，避免拖慢客户端提问接口的响应。"""
@@ -251,7 +284,7 @@ async def _notify_agent_unresolved(conversation_id: int, product: str, question:
         f"请登录客服工作台查看并回复：/agent\n"
     )
     try:
-        await asyncio.to_thread(send_email, subject, body, _notify_recipient())
+        await asyncio.to_thread(send_email, subject, body, _notify_recipient(), **_smtp_overrides())
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] 转人工提醒邮件发送失败: {exc}", file=sys.stderr)
 
@@ -291,7 +324,9 @@ async def _reminder_loop() -> None:
                     lines.append(f"- 对话 #{item['id']}（{label}）：{item['question']}")
                 lines.append("")
                 lines.append("请登录客服工作台查看并回复：/agent")
-                await asyncio.to_thread(send_email, subject, "\n".join(lines), _notify_recipient())
+                await asyncio.to_thread(
+                    send_email, subject, "\n".join(lines), _notify_recipient(), **_smtp_overrides()
+                )
 
             database.set_setting("reminder_last_sent_at", now.strftime("%Y-%m-%dT%H:%M:%SZ"))
         except Exception as exc:  # noqa: BLE001
@@ -343,6 +378,53 @@ def set_collab_timeout(req: CollabTimeoutRequest, agent: dict = Depends(require_
         raise HTTPException(status_code=400, detail="超时时间需在 1-300 秒之间")
     database.set_setting("collab_auto_send_seconds", str(req.seconds))
     return {"seconds": req.seconds}
+
+
+# ---------------- SMTP 发信配置（后台可配置，优先于 .env 里的 SMTP_*） ----------------
+
+@app.get("/api/smtp-settings")
+def get_smtp_settings(agent: dict = Depends(require_admin)) -> dict:
+    """出于安全考虑，密码不会原样返回，只返回是否已配置过（password_set），
+    管理员保存新配置时若留空密码，则视为沿用已保存的旧密码。"""
+    db_host = database.get_setting("smtp_host")
+    db_password = database.get_setting("smtp_password")
+    return {
+        "host": db_host or os.getenv("SMTP_HOST", ""),
+        "port": int(database.get_setting("smtp_port", os.getenv("SMTP_PORT", "587")) or "587"),
+        "username": database.get_setting("smtp_username") or os.getenv("SMTP_USERNAME", ""),
+        "sender": database.get_setting("smtp_from") or os.getenv("SMTP_FROM", ""),
+        "use_tls": (database.get_setting("smtp_use_tls") or os.getenv("SMTP_USE_TLS", "true")) == "true",
+        "use_ssl": (database.get_setting("smtp_use_ssl") or os.getenv("SMTP_USE_SSL", "false")) == "true",
+        "password_set": bool(db_password) or bool(os.getenv("SMTP_PASSWORD")),
+        "source": "database" if db_host else ("env" if os.getenv("SMTP_HOST") else "none"),
+    }
+
+
+@app.post("/api/smtp-settings")
+def set_smtp_settings(req: SmtpSettingsRequest, agent: dict = Depends(require_admin)) -> dict:
+    if not req.host.strip():
+        raise HTTPException(status_code=400, detail="请填写发信服务器地址")
+    if req.port < 1 or req.port > 65535:
+        raise HTTPException(status_code=400, detail="端口号不合法")
+
+    database.set_setting("smtp_host", req.host.strip())
+    database.set_setting("smtp_port", str(req.port))
+    database.set_setting("smtp_username", (req.username or "").strip())
+    if req.password:  # 留空表示不修改已保存的密码
+        database.set_setting("smtp_password", req.password)
+    database.set_setting("smtp_from", (req.sender or req.username or "").strip())
+    database.set_setting("smtp_use_tls", "true" if req.use_tls else "false")
+    database.set_setting("smtp_use_ssl", "true" if req.use_ssl else "false")
+    return {"success": True}
+
+
+@app.post("/api/smtp-settings/test")
+async def test_smtp_settings(req: SmtpTestRequest, agent: dict = Depends(require_admin)) -> dict:
+    to = (req.to or _notify_recipient() or os.getenv("NOTIFY_EMAIL_TO", DEFAULT_NOTIFY_EMAIL_TO)).strip()
+    success, detail = await asyncio.to_thread(send_test_email, to, **_smtp_overrides())
+    if not success:
+        raise HTTPException(status_code=400, detail=f"发送失败：{detail}")
+    return {"success": True, "detail": detail}
 
 
 # ---------------- 邮件提醒收件邮箱（即时提醒 + 定时提醒共用） ----------------

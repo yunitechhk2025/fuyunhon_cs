@@ -946,6 +946,30 @@
           </div>
         </div>
 
+        <div id="admin-smtp-section" style="display: none;">
+          <h4>SMTP 发信配置</h4>
+          <p style="font-size: 12px; color: #94a1b8; margin: 0 0 10px; line-height: 1.6;">
+            在这里配置后，优先级高于服务器 `.env` 里的 SMTP_* 变量，换服务器/换邮箱都不用再登服务器改文件。
+            密码留空保存表示不修改已保存的密码。
+          </p>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+            <input id="smtp-host-input" type="text" placeholder="发信服务器，如 smtp.gmail.com" style="padding: 9px 10px; border: 1px solid #d7dfec; border-radius: 8px; font-size: 13px;" />
+            <input id="smtp-port-input" type="number" placeholder="端口，如 587" style="padding: 9px 10px; border: 1px solid #d7dfec; border-radius: 8px; font-size: 13px;" />
+            <input id="smtp-username-input" type="text" placeholder="发信账号" style="padding: 9px 10px; border: 1px solid #d7dfec; border-radius: 8px; font-size: 13px;" />
+            <input id="smtp-password-input" type="password" placeholder="密码/应用专用密码（留空=不修改）" style="padding: 9px 10px; border: 1px solid #d7dfec; border-radius: 8px; font-size: 13px;" />
+            <input id="smtp-from-input" type="text" placeholder="发信人地址（默认同账号）" style="padding: 9px 10px; border: 1px solid #d7dfec; border-radius: 8px; font-size: 13px; grid-column: span 2;" />
+          </div>
+          <div style="display: flex; gap: 14px; align-items: center; margin-bottom: 10px; font-size: 13px; color: #6b7686;">
+            <label style="display: flex; align-items: center; gap: 5px;"><input id="smtp-tls-input" type="checkbox" /> 使用 STARTTLS（587端口常用）</label>
+            <label style="display: flex; align-items: center; gap: 5px;"><input id="smtp-ssl-input" type="checkbox" /> 使用 SSL（465端口常用）</label>
+          </div>
+          <div id="smtp-status" style="font-size: 12px; color: #94a1b8; margin-bottom: 10px;"></div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-primary" id="save-smtp-btn">保存</button>
+            <button class="btn btn-secondary" id="test-smtp-btn">发送测试邮件</button>
+          </div>
+        </div>
+
         <div id="admin-notify-email-section" style="display: none;">
           <h4>邮件提醒收件人</h4>
           <p style="font-size: 12px; color: #94a1b8; margin: 0 0 10px; line-height: 1.6;">
@@ -1024,6 +1048,17 @@
       const adminTimeoutSection = document.getElementById("admin-timeout-section");
       const collabTimeoutInput = document.getElementById("collab-timeout-input");
       const saveTimeoutBtn = document.getElementById("save-timeout-btn");
+      const adminSmtpSection = document.getElementById("admin-smtp-section");
+      const smtpHostInput = document.getElementById("smtp-host-input");
+      const smtpPortInput = document.getElementById("smtp-port-input");
+      const smtpUsernameInput = document.getElementById("smtp-username-input");
+      const smtpPasswordInput = document.getElementById("smtp-password-input");
+      const smtpFromInput = document.getElementById("smtp-from-input");
+      const smtpTlsInput = document.getElementById("smtp-tls-input");
+      const smtpSslInput = document.getElementById("smtp-ssl-input");
+      const smtpStatusEl = document.getElementById("smtp-status");
+      const saveSmtpBtn = document.getElementById("save-smtp-btn");
+      const testSmtpBtn = document.getElementById("test-smtp-btn");
       const adminNotifyEmailSection = document.getElementById("admin-notify-email-section");
       const notifyEmailInput = document.getElementById("notify-email-input");
       const saveNotifyEmailBtn = document.getElementById("save-notify-email-btn");
@@ -1161,6 +1196,7 @@
         adminTimeoutSection.style.display = agent.role === "admin" ? "block" : "none";
         adminReminderSection.style.display = agent.role === "admin" ? "block" : "none";
         adminNotifyEmailSection.style.display = agent.role === "admin" ? "block" : "none";
+        adminSmtpSection.style.display = agent.role === "admin" ? "block" : "none";
         refreshMode();
         await refreshProducts();
         refreshSessions();
@@ -1169,6 +1205,7 @@
           refreshCollabTimeout();
           refreshReminderSettings();
           refreshNotifyEmail();
+          refreshSmtpSettings();
         }
         connectWebSocket(token);
       }
@@ -1256,6 +1293,70 @@
           showToast("已保存自动发送时间设置");
         } catch (err) {
           showToast(err.message);
+        }
+      });
+
+      // ---------------- SMTP 发信配置 ----------------
+
+      async function refreshSmtpSettings() {
+        try {
+          const data = await apiFetch("/api/smtp-settings");
+          smtpHostInput.value = data.host || "";
+          smtpPortInput.value = data.port || 587;
+          smtpUsernameInput.value = data.username || "";
+          smtpFromInput.value = data.sender || "";
+          smtpTlsInput.checked = !!data.use_tls;
+          smtpSslInput.checked = !!data.use_ssl;
+          smtpPasswordInput.value = "";
+          smtpPasswordInput.placeholder = data.password_set
+            ? "已设置密码（留空=不修改）"
+            : "密码/应用专用密码（留空=不修改）";
+          const sourceLabel = data.source === "database" ? "当前来源：后台配置" : data.source === "env" ? "当前来源：服务器 .env" : "当前未配置";
+          smtpStatusEl.textContent = sourceLabel;
+        } catch (err) {
+          smtpStatusEl.textContent = "加载失败：" + err.message;
+        }
+      }
+
+      saveSmtpBtn.addEventListener("click", async () => {
+        const host = smtpHostInput.value.trim();
+        const port = Number(smtpPortInput.value);
+        if (!host || !port) {
+          showToast("请填写发信服务器地址和端口");
+          return;
+        }
+        try {
+          await apiFetch("/api/smtp-settings", {
+            method: "POST",
+            body: JSON.stringify({
+              host,
+              port,
+              username: smtpUsernameInput.value.trim(),
+              password: smtpPasswordInput.value || null,
+              sender: smtpFromInput.value.trim(),
+              use_tls: smtpTlsInput.checked,
+              use_ssl: smtpSslInput.checked,
+            }),
+          });
+          showToast("SMTP 配置已保存");
+          await refreshSmtpSettings();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+
+      testSmtpBtn.addEventListener("click", async () => {
+        testSmtpBtn.disabled = true;
+        smtpStatusEl.textContent = "正在发送测试邮件...";
+        try {
+          const data = await apiFetch("/api/smtp-settings/test", { method: "POST", body: JSON.stringify({}) });
+          smtpStatusEl.textContent = "✅ 测试邮件发送成功：" + data.detail;
+          showToast("测试邮件已发送，请去收件邮箱查看");
+        } catch (err) {
+          smtpStatusEl.textContent = "❌ " + err.message;
+          showToast(err.message);
+        } finally {
+          testSmtpBtn.disabled = false;
         }
       });
 
