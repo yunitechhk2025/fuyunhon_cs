@@ -386,17 +386,20 @@
         return data;
       }
 
-      async function pollAnswer(conversationId, loadingEl) {
+      async function pollAnswer(conversationId, loadingEl, matched) {
         const maxAttempts = 200; // 约 10 分钟（每 3 秒一次）
         let answered = false;
 
-        // 转人工后，如果客服 10 秒内还没有回复，提示客户人工客服正忙，但不停止轮询，
-        // 一旦真正的回复到达，会覆盖掉这条提示。
-        const busyTimer = setTimeout(() => {
-          if (!answered) {
-            loadingEl.textContent = "人工客服正忙，请您稍后查看回复，感谢您的耐心等待～";
-          }
-        }, 10000);
+        // matched=true 说明题库已命中、AI 正在准备自动发送，这个等待过程从头到尾都跟"人工客服"无关，
+        // 全程只应该出现"AI"相关的话术，绝不能出现"转人工/人工客服正忙"这类文案，避免误导客户。
+        // 只有 matched=false（题库未命中，真正转人工）时，才会在等太久后提示"人工客服正忙"。
+        const busyTimer = matched
+          ? null
+          : setTimeout(() => {
+              if (!answered) {
+                loadingEl.textContent = "人工客服正忙，请您稍后查看回复，感谢您的耐心等待～";
+              }
+            }, 10000);
 
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -405,7 +408,7 @@
             const data = await res.json();
             if (data.status === "answered" && data.answer) {
               answered = true;
-              clearTimeout(busyTimer);
+              if (busyTimer) clearTimeout(busyTimer);
               loadingEl.textContent = data.answer;
               return;
             }
@@ -413,8 +416,10 @@
             // 网络抖动时静默重试
           }
         }
-        clearTimeout(busyTimer);
-        loadingEl.textContent = "客服暂时繁忙，请稍后重新提问或换个方式联系我们。";
+        if (busyTimer) clearTimeout(busyTimer);
+        loadingEl.textContent = matched
+          ? "AI 思考时间较长，请您稍后重新查看回复，感谢您的耐心等待～"
+          : "客服暂时繁忙，请稍后重新提问或换个方式联系我们。";
       }
 
       form.addEventListener("submit", async (event) => {
@@ -441,7 +446,7 @@
             loading.textContent = data.matched
               ? "AI 正在思考您的问题，请稍候..."
               : "已收到您的问题，正在为您转接人工客服，请稍候...";
-            await pollAnswer(data.conversation_id, loading);
+            await pollAnswer(data.conversation_id, loading, data.matched);
           }
         } catch (err) {
           loading.textContent = `出错了：${err.message}`;
