@@ -284,7 +284,6 @@ async def _notify_agent_unresolved(conversation_id: int, product: str, question:
         f"转人工原因：{reason}\n"
         f"客户提问：{question}\n"
         f"对话编号：#{conversation_id}\n"
-        f"请登录客服工作台查看并回复：/agent\n"
     )
     try:
         await asyncio.to_thread(send_email, subject, body, _notify_recipient(), **_smtp_overrides())
@@ -325,8 +324,6 @@ async def _reminder_loop() -> None:
                 for item in queue:
                     label = PRODUCTS.get(item["product"], {}).get("label", item["product"] or "未知产品")
                     lines.append(f"- 对话 #{item['id']}（{label}）：{item['question']}")
-                lines.append("")
-                lines.append("请登录客服工作台查看并回复：/agent")
                 await asyncio.to_thread(
                     send_email, subject, "\n".join(lines), _notify_recipient(), **_smtp_overrides()
                 )
