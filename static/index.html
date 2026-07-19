@@ -388,12 +388,24 @@
 
       async function pollAnswer(conversationId, loadingEl) {
         const maxAttempts = 200; // 约 10 分钟（每 3 秒一次）
+        let answered = false;
+
+        // 转人工后，如果客服 10 秒内还没有回复，提示客户人工客服正忙，但不停止轮询，
+        // 一旦真正的回复到达，会覆盖掉这条提示。
+        const busyTimer = setTimeout(() => {
+          if (!answered) {
+            loadingEl.textContent = "人工客服正忙，请您稍后查看回复，感谢您的耐心等待～";
+          }
+        }, 10000);
+
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           await new Promise((resolve) => setTimeout(resolve, 3000));
           try {
             const res = await fetch(`/api/conversations/${conversationId}`);
             const data = await res.json();
             if (data.status === "answered" && data.answer) {
+              answered = true;
+              clearTimeout(busyTimer);
               loadingEl.textContent = data.answer;
               return;
             }
@@ -401,6 +413,7 @@
             // 网络抖动时静默重试
           }
         }
+        clearTimeout(busyTimer);
         loadingEl.textContent = "客服暂时繁忙，请稍后重新提问或换个方式联系我们。";
       }
 

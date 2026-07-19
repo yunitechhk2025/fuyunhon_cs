@@ -15,6 +15,7 @@ from pydantic import BaseModel
 import database
 from auth import create_token, decode_token, get_current_agent, require_admin
 from doc_rag_chatbot import DocRagBot
+from email_utils import send_email
 from excel_rag_chatbot import AnswerResult, ExcelFaqRagBot
 from ws_manager import manager
 
@@ -22,8 +23,11 @@ DEFAULT_EXCEL = "2026.01.26_肤润康-常见咨询问题_v2(1).xls"
 UREA_DOC = "urea_hand_cream_info.md"
 DEFAULT_MODEL = "qwen3.6-flash"
 VALID_MODES = {"auto", "manual", "collab"}
+MODE_LABELS = {"auto": "全AI模式", "manual": "全人工模式", "collab": "人机协同模式"}
 DEFAULT_COLLAB_AUTO_SEND_SECONDS = 5
 AUTO_SEND_AGENT_NAME = "AI自动发送"
+DEFAULT_REMINDER_INTERVAL_MINUTES = 30
+REMINDER_TICK_SECONDS = 30
 
 # 两款产品用了两种不同的知识来源：
 # - 杜鹃花酸乳霜：现成的"问题-答案"题库（Excel），专业内容原文照搬，逐字不改写。
@@ -69,6 +73,11 @@ class CollabTimeoutRequest(BaseModel):
     seconds: float
 
 
+class ReminderSettingsRequest(BaseModel):
+    enabled: bool
+    interval_minutes: float
+
+
 class CreateAgentRequest(BaseModel):
     username: str
     password: str
@@ -97,7 +106,7 @@ bots: dict = {}
 
 
 @app.on_event("startup")
-def startup() -> None:
+async def startup() -> None:
     database.init_db()
 
     top_k = int(os.getenv("FAQ_TOP_K", "8"))
@@ -136,6 +145,8 @@ def startup() -> None:
                 existing_bot.load_extra_items(shared_items)
             else:
                 bots[product_id] = ExcelFaqRagBot.from_items(shared_items, top_k=top_k, min_score=min_score)
+
+    asyncio.create_task(_reminder_loop())
 
 
 @app.get("/")
@@ -214,6 +225,68 @@ async def _auto_send_after_timeout(conversation_id: int, ai_answer: str, timeout
         print(f"[warn] 协同模式自动发送失败: {exc}", file=sys.stderr)
 
 
+async def _notify_agent_unresolved(conversation_id: int, product: str, question: str, mode: str, reason: str) -> None:
+    """客户的问题需要人工处理时（题库未命中，或全人工模式下的任意问题），邮件提醒客服/管理员。
+    邮件发送是阻塞的网络调用，用线程池执行，避免拖慢客户端提问接口的响应。"""
+    product_label = PRODUCTS.get(product, {}).get("label", product or "未知产品")
+    mode_label = MODE_LABELS.get(mode, mode)
+    subject = f"【客服提醒】有客户问题待人工处理（对话 #{conversation_id}）"
+    body = (
+        f"产品：{product_label}\n"
+        f"工作模式：{mode_label}\n"
+        f"转人工原因：{reason}\n"
+        f"客户提问：{question}\n"
+        f"对话编号：#{conversation_id}\n"
+        f"请登录客服工作台查看并回复：/agent\n"
+    )
+    try:
+        await asyncio.to_thread(send_email, subject, body)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] 转人工提醒邮件发送失败: {exc}", file=sys.stderr)
+
+
+async def _reminder_loop() -> None:
+    """后台定时提醒：管理员可在工作台开启/关闭，并设置提醒间隔（分钟）。
+    开启后，每到设定的间隔就统计一次当前待处理队列（按客户/session_id 分组），
+    通过邮件汇总提醒有多少客户、多少条问题待处理；队列为空时不打扰，只更新计时。"""
+    while True:
+        try:
+            await asyncio.sleep(REMINDER_TICK_SECONDS)
+            enabled = database.get_setting("reminder_enabled", "false") == "true"
+            if not enabled:
+                continue
+
+            interval_minutes = float(
+                database.get_setting("reminder_interval_minutes", str(DEFAULT_REMINDER_INTERVAL_MINUTES))
+            )
+            last_sent_raw = database.get_setting("reminder_last_sent_at")
+            now = datetime.utcnow()
+            if last_sent_raw:
+                try:
+                    last_sent = datetime.strptime(last_sent_raw, "%Y-%m-%dT%H:%M:%SZ")
+                    if (now - last_sent).total_seconds() < interval_minutes * 60:
+                        continue
+                except ValueError:
+                    pass
+
+            queue = database.list_queue()
+            if queue:
+                customer_count = len({item["session_id"] for item in queue})
+                question_count = len(queue)
+                subject = f"【客服定时提醒】当前有 {customer_count} 位客户、{question_count} 个问题待处理"
+                lines = [subject, ""]
+                for item in queue:
+                    label = PRODUCTS.get(item["product"], {}).get("label", item["product"] or "未知产品")
+                    lines.append(f"- 对话 #{item['id']}（{label}）：{item['question']}")
+                lines.append("")
+                lines.append("请登录客服工作台查看并回复：/agent")
+                await asyncio.to_thread(send_email, subject, "\n".join(lines))
+
+            database.set_setting("reminder_last_sent_at", now.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] 定时提醒任务失败: {exc}", file=sys.stderr)
+
+
 def _log_retrieval_only(conversation_id: int, product: str, question: str) -> None:
     """全人工模式下不调用 AI 生成回复，但仍在后台记录题库检索结果，便于客服复核。"""
     product_bot = bots.get(product)
@@ -261,6 +334,28 @@ def set_collab_timeout(req: CollabTimeoutRequest, agent: dict = Depends(require_
     return {"seconds": req.seconds}
 
 
+# ---------------- 待处理队列定时提醒（邮件） ----------------
+
+@app.get("/api/reminder-settings")
+def get_reminder_settings() -> dict:
+    enabled = database.get_setting("reminder_enabled", "false") == "true"
+    interval_minutes = float(
+        database.get_setting("reminder_interval_minutes", str(DEFAULT_REMINDER_INTERVAL_MINUTES))
+    )
+    return {"enabled": enabled, "interval_minutes": interval_minutes}
+
+
+@app.post("/api/reminder-settings")
+def set_reminder_settings(req: ReminderSettingsRequest, agent: dict = Depends(require_admin)) -> dict:
+    if req.interval_minutes < 1 or req.interval_minutes > 1440:
+        raise HTTPException(status_code=400, detail="提醒间隔需在 1-1440 分钟之间")
+    database.set_setting("reminder_enabled", "true" if req.enabled else "false")
+    database.set_setting("reminder_interval_minutes", str(req.interval_minutes))
+    # 重新开启或修改间隔时，把"上次发送时间"重置为现在，避免用刚关闭前的旧计时立刻触发一次意外提醒。
+    database.set_setting("reminder_last_sent_at", datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"))
+    return {"enabled": req.enabled, "interval_minutes": req.interval_minutes}
+
+
 # ---------------- 客户端提问 ----------------
 
 @app.post("/api/ask", response_model=AskResponse)
@@ -276,6 +371,10 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
 
     # 未命中题库（包括该产品尚未建立题库的情况）时，任何模式都不允许 AI 直接回复或编造答案，
     # 统一转人工处理；只有确认命中题库时，才允许由 AI 直接回复（全AI模式）或生成建议（协同模式）。
+    # notify_reason 非空则说明本次提问需要邮件提醒客服：全AI/协同模式仅在题库未命中时提醒，
+    # 全人工模式因为从不由 AI 直接作答，每一条新问题都需要提醒。
+    notify_reason: Optional[str] = None
+
     if mode == "auto":
         result: Optional[AnswerResult] = None
         try:
@@ -293,6 +392,7 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
         database.set_retrieval_info(
             conversation_id, False, None, None, result.score if result is not None else 0.0
         )
+        notify_reason = "题库未命中"
 
     elif mode == "collab":
         try:
@@ -308,16 +408,23 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
                 auto_send_at = (datetime.utcnow() + timedelta(seconds=timeout)).strftime("%Y-%m-%dT%H:%M:%SZ")
                 database.set_auto_send_at(conversation_id, auto_send_at)
                 asyncio.create_task(_auto_send_after_timeout(conversation_id, result.text, timeout))
-            # 未命中：不生成 AI 建议、不安排自动发送，完全交给客服人工处理
+            else:
+                # 未命中：不生成 AI 建议、不安排自动发送，完全交给客服人工处理
+                notify_reason = "题库未命中"
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] 协同模式生成AI建议失败: {exc}", file=sys.stderr)
             database.set_retrieval_info(conversation_id, False, None, None, 0.0)
+            notify_reason = "题库未命中"
     elif mode == "manual":
         _log_retrieval_only(conversation_id, product, question)
+        notify_reason = "全人工模式"
 
     # 走到这里说明本次提问需要人工处理（全人工模式 / 协同或全AI模式下未命中题库）
     conversation = database.get_conversation(conversation_id)
     await manager.broadcast({"type": "new_question", "conversation": dict(conversation)})
+
+    if notify_reason:
+        asyncio.create_task(_notify_agent_unresolved(conversation_id, product, question, mode, notify_reason))
 
     return AskResponse(conversation_id=conversation_id, status="pending", answer=None, mode=mode)
 
