@@ -64,6 +64,9 @@
       }
 
       .message {
+        /* width: fit-content 让气泡宽度跟着文字内容走，短消息就是短气泡；
+           max-width 只用来限制长消息不要撑得太宽，两者配合才不会出现"文字很短、气泡却很宽"的丑样子。 */
+        width: fit-content;
         max-width: 78%;
         margin-bottom: 16px;
         padding: 13px 15px;
