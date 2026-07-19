@@ -361,6 +361,35 @@ def list_sessions(limit: int = 200) -> list:
         return sessions
 
 
+def get_daily_stats(start_utc: str, end_utc: str) -> dict:
+    """统计 [start_utc, end_utc) 时间范围内（UTC，'YYYY-MM-DD HH:MM:SS' 格式，与 created_at 一致）的：
+    咨询用户数（按 session_id 去重）、总对话条数、转人工请求次数。
+    转人工请求的判定口径与 web_app._notify_agent_unresolved 的触发条件保持一致：
+    全人工模式下的任意问题，或全AI/协同模式下题库未命中（matched 为假或未记录）。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(DISTINCT session_id) AS user_count,
+                COUNT(*) AS conversation_count,
+                SUM(
+                    CASE
+                        WHEN mode_used = 'manual' OR matched = 0 OR matched IS NULL THEN 1
+                        ELSE 0
+                    END
+                ) AS handoff_count
+            FROM conversations
+            WHERE created_at >= ? AND created_at < ?
+            """,
+            (start_utc, end_utc),
+        ).fetchone()
+        return {
+            "user_count": row["user_count"] or 0,
+            "conversation_count": row["conversation_count"] or 0,
+            "handoff_count": row["handoff_count"] or 0,
+        }
+
+
 def list_session_messages(session_id: str) -> list:
     """返回某个用户会话下的全部提问/回复记录，按时间顺序排列，用于客服工作台的连续对话展示。"""
     with get_conn() as conn:

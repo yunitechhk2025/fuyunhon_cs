@@ -1008,6 +1008,25 @@
           </div>
         </div>
 
+        <div id="admin-daily-report-section" style="display: none;">
+          <h4>每日数据日报（邮件）</h4>
+          <p style="font-size: 12px; color: #94a1b8; margin: 0 0 10px; line-height: 1.6;">
+            开启后，每天到设定时间点（按香港时间计算）会发一封邮件，汇总前一天的咨询用户数、
+            总对话条数、转人工请求次数，发送到上面配置的收件邮箱。
+          </p>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <button class="btn" id="daily-report-toggle-btn">加载中...</button>
+            <span style="font-size: 13px; color: #6b7686;">每天</span>
+            <input
+              id="daily-report-time-input"
+              type="time"
+              style="padding: 9px 10px; border: 1px solid #d7dfec; border-radius: 8px; font-size: 13px;"
+            />
+            <span style="font-size: 13px; color: #6b7686;">（香港时间）推送</span>
+            <button class="btn btn-primary" id="save-daily-report-btn">保存</button>
+          </div>
+        </div>
+
         <div id="admin-agents-section" style="display: none;">
           <h4>客服账号管理（管理员）</h4>
           <ul class="agents-list" id="agents-list"></ul>
@@ -1066,6 +1085,10 @@
       const reminderToggleBtn = document.getElementById("reminder-toggle-btn");
       const reminderIntervalInput = document.getElementById("reminder-interval-input");
       const saveReminderBtn = document.getElementById("save-reminder-btn");
+      const adminDailyReportSection = document.getElementById("admin-daily-report-section");
+      const dailyReportToggleBtn = document.getElementById("daily-report-toggle-btn");
+      const dailyReportTimeInput = document.getElementById("daily-report-time-input");
+      const saveDailyReportBtn = document.getElementById("save-daily-report-btn");
       const adminAgentsSection = document.getElementById("admin-agents-section");
       const agentsList = document.getElementById("agents-list");
       const toastEl = document.getElementById("toast");
@@ -1195,6 +1218,7 @@
         adminAgentsSection.style.display = agent.role === "admin" ? "block" : "none";
         adminTimeoutSection.style.display = agent.role === "admin" ? "block" : "none";
         adminReminderSection.style.display = agent.role === "admin" ? "block" : "none";
+        adminDailyReportSection.style.display = agent.role === "admin" ? "block" : "none";
         adminNotifyEmailSection.style.display = agent.role === "admin" ? "block" : "none";
         adminSmtpSection.style.display = agent.role === "admin" ? "block" : "none";
         refreshMode();
@@ -1204,6 +1228,7 @@
           refreshAgents();
           refreshCollabTimeout();
           refreshReminderSettings();
+          refreshDailyReportSettings();
           refreshNotifyEmail();
           refreshSmtpSettings();
         }
@@ -1427,6 +1452,48 @@
 
       reminderToggleBtn.addEventListener("click", () => saveReminderSettings(!reminderEnabled));
       saveReminderBtn.addEventListener("click", () => saveReminderSettings(reminderEnabled));
+
+      // ---------------- 每日数据日报（邮件） ----------------
+
+      let dailyReportEnabled = false;
+
+      function renderDailyReportToggle() {
+        dailyReportToggleBtn.textContent = dailyReportEnabled ? "✅ 已开启，点击关闭" : "⭕ 已关闭，点击开启";
+        dailyReportToggleBtn.className = dailyReportEnabled ? "btn btn-primary" : "btn btn-secondary";
+      }
+
+      async function refreshDailyReportSettings() {
+        try {
+          const data = await apiFetch("/api/daily-report-settings");
+          dailyReportEnabled = !!data.enabled;
+          dailyReportTimeInput.value = data.time;
+          renderDailyReportToggle();
+        } catch (err) {
+          dailyReportToggleBtn.textContent = "加载失败";
+        }
+      }
+
+      async function saveDailyReportSettings(nextEnabled) {
+        const time = dailyReportTimeInput.value;
+        if (!time) {
+          showToast("请选择推送时间");
+          return;
+        }
+        try {
+          await apiFetch("/api/daily-report-settings", {
+            method: "POST",
+            body: JSON.stringify({ enabled: nextEnabled, time }),
+          });
+          dailyReportEnabled = nextEnabled;
+          renderDailyReportToggle();
+          showToast(nextEnabled ? "已开启每日日报" : "已保存设置");
+        } catch (err) {
+          showToast(err.message);
+        }
+      }
+
+      dailyReportToggleBtn.addEventListener("click", () => saveDailyReportSettings(!dailyReportEnabled));
+      saveDailyReportBtn.addEventListener("click", () => saveDailyReportSettings(dailyReportEnabled));
 
       // ---------------- 会话列表（按用户 session_id 分组，一个用户一个对话框） ----------------
 

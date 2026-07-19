@@ -9,3 +9,4 @@ uvicorn
 bcrypt
 pyjwt
 websockets
+tzdata

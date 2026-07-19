@@ -1,10 +1,12 @@
 import asyncio
 import os
+import re
 import sys
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +30,11 @@ DEFAULT_COLLAB_AUTO_SEND_SECONDS = 5
 AUTO_SEND_AGENT_NAME = "AI自动发送"
 DEFAULT_REMINDER_INTERVAL_MINUTES = 30
 REMINDER_TICK_SECONDS = 30
+
+# 每日数据日报：默认每天香港时间 09:00 推送前一个香港日历日（00:00~24:00）的统计数据。
+HK_TZ = ZoneInfo("Asia/Hong_Kong")
+DEFAULT_DAILY_REPORT_TIME = "09:00"
+DAILY_REPORT_TICK_SECONDS = 30
 
 # 两款产品用了两种不同的知识来源：
 # - 杜鹃花酸乳霜：现成的"问题-答案"题库（Excel），专业内容原文照搬，逐字不改写。
@@ -79,6 +86,12 @@ class CollabTimeoutRequest(BaseModel):
 class ReminderSettingsRequest(BaseModel):
     enabled: bool
     interval_minutes: float
+
+
+class DailyReportSettingsRequest(BaseModel):
+    enabled: bool
+    # 格式 "HH:MM"，按香港时间（Asia/Hong_Kong）计算
+    time: str
 
 
 class NotifyEmailRequest(BaseModel):
@@ -169,6 +182,7 @@ async def startup() -> None:
                 bots[product_id] = ExcelFaqRagBot.from_items(shared_items, top_k=top_k, min_score=min_score)
 
     asyncio.create_task(_reminder_loop())
+    asyncio.create_task(_daily_report_loop())
 
 
 @app.get("/")
@@ -333,6 +347,52 @@ async def _reminder_loop() -> None:
             print(f"[warn] 定时提醒任务失败: {exc}", file=sys.stderr)
 
 
+def _daily_report_range_utc(now_hk: datetime) -> Tuple[str, str, str]:
+    """给定当前香港时间，返回"前一个香港日历日"（00:00~24:00）对应的 UTC 起止时间字符串
+    （格式与 conversations.created_at 一致，便于直接用于 SQL 区间查询），以及该日历日的日期标签。"""
+    today_hk_midnight = now_hk.replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_hk_midnight = today_hk_midnight - timedelta(days=1)
+    fmt_sql = "%Y-%m-%d %H:%M:%S"
+    start_utc = yesterday_hk_midnight.astimezone(timezone.utc).strftime(fmt_sql)
+    end_utc = today_hk_midnight.astimezone(timezone.utc).strftime(fmt_sql)
+    return start_utc, end_utc, yesterday_hk_midnight.strftime("%Y-%m-%d")
+
+
+async def _daily_report_loop() -> None:
+    """每日数据日报：管理员可在工作台开启/关闭，并设置每天推送的时间点（香港时间，HH:MM）。
+    到点后统计"前一个香港日历日"的咨询用户数、总对话条数、转人工请求次数，通过邮件推送；
+    用一个"今天是否已发送"的日期标记去重，避免同一天到点后被重复触发或重启后重复发送。"""
+    while True:
+        try:
+            await asyncio.sleep(DAILY_REPORT_TICK_SECONDS)
+            enabled = database.get_setting("daily_report_enabled", "true") == "true"
+            if not enabled:
+                continue
+
+            report_time = database.get_setting("daily_report_time", DEFAULT_DAILY_REPORT_TIME)
+            now_hk = datetime.now(HK_TZ)
+            today_hk_str = now_hk.strftime("%Y-%m-%d")
+
+            if database.get_setting("daily_report_last_sent_date") == today_hk_str:
+                continue
+            if now_hk.strftime("%H:%M") < report_time:
+                continue
+
+            start_utc, end_utc, report_date_label = _daily_report_range_utc(now_hk)
+            stats = database.get_daily_stats(start_utc, end_utc)
+            subject = f"【肤润康 AI 客服数据日报】{report_date_label}"
+            body = (
+                f"报表日期：{report_date_label}（香港时间 00:00-24:00）\n\n"
+                f"咨询用户数：{stats['user_count']} 人\n"
+                f"总对话条数：{stats['conversation_count']} 条\n"
+                f"转人工请求：{stats['handoff_count']} 次\n"
+            )
+            await asyncio.to_thread(send_email, subject, body, _notify_recipient(), **_smtp_overrides())
+            database.set_setting("daily_report_last_sent_date", today_hk_str)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] 每日数据日报任务失败: {exc}", file=sys.stderr)
+
+
 def _log_retrieval_only(conversation_id: int, product: str, question: str) -> None:
     """全人工模式下不调用 AI 生成回复，但仍在后台记录题库检索结果，便于客服复核。"""
     product_bot = bots.get(product)
@@ -465,6 +525,31 @@ def set_reminder_settings(req: ReminderSettingsRequest, agent: dict = Depends(re
     # 重新开启或修改间隔时，把"上次发送时间"重置为现在，避免用刚关闭前的旧计时立刻触发一次意外提醒。
     database.set_setting("reminder_last_sent_at", datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"))
     return {"enabled": req.enabled, "interval_minutes": req.interval_minutes}
+
+
+# ---------------- 每日数据日报（邮件） ----------------
+
+@app.get("/api/daily-report-settings")
+def get_daily_report_settings() -> dict:
+    enabled = database.get_setting("daily_report_enabled", "true") == "true"
+    report_time = database.get_setting("daily_report_time", DEFAULT_DAILY_REPORT_TIME)
+    return {"enabled": enabled, "time": report_time}
+
+
+@app.post("/api/daily-report-settings")
+def set_daily_report_settings(
+    req: DailyReportSettingsRequest, agent: dict = Depends(require_admin)
+) -> dict:
+    if not re.fullmatch(r"[0-2]\d:[0-5]\d", req.time):
+        raise HTTPException(status_code=400, detail="推送时间格式需为 HH:MM，例如 09:00")
+    hour, minute = (int(part) for part in req.time.split(":"))
+    if hour > 23:
+        raise HTTPException(status_code=400, detail="推送时间格式需为 HH:MM，例如 09:00")
+    database.set_setting("daily_report_enabled", "true" if req.enabled else "false")
+    database.set_setting("daily_report_time", f"{hour:02d}:{minute:02d}")
+    # 修改设置后重置"今天是否已发送"标记，避免用旧设置遗留的标记误判为今天已发过
+    database.set_setting("daily_report_last_sent_date", "")
+    return {"enabled": req.enabled, "time": f"{hour:02d}:{minute:02d}"}
 
 
 # ---------------- 客户端提问 ----------------
