@@ -78,6 +78,45 @@
         border-top-left-radius: 4px;
       }
 
+      /* 等待结果时用几个跳动的小圆点表示"还在处理中"，比纯静态文字更直观。 */
+      .typing-dots {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: 6px;
+        vertical-align: middle;
+      }
+
+      .typing-dots span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #7a8aa8;
+        opacity: 0.35;
+        animation: typing-bounce 1.1s infinite ease-in-out;
+      }
+
+      .typing-dots span:nth-child(2) {
+        animation-delay: 0.15s;
+      }
+
+      .typing-dots span:nth-child(3) {
+        animation-delay: 0.3s;
+      }
+
+      @keyframes typing-bounce {
+        0%,
+        60%,
+        100% {
+          transform: translateY(0);
+          opacity: 0.35;
+        }
+        30% {
+          transform: translateY(-4px);
+          opacity: 0.9;
+        }
+      }
+
       .user {
         margin-left: auto;
         background: #2f6fed;
@@ -309,6 +348,26 @@
         return el;
       }
 
+      function escapeHtml(str) {
+        const div = document.createElement("div");
+        div.textContent = str == null ? "" : str;
+        return div.innerHTML;
+      }
+
+      const THINKING_DOTS_HTML = '<span class="typing-dots"><span></span><span></span><span></span></span>';
+
+      // 还在等结果（AI 思考中 / 排队转人工中）时用这个：文字 + 跳动的小圆点，让客户感觉到"还在处理"。
+      function setThinkingText(el, text) {
+        el.innerHTML = escapeHtml(text) + THINKING_DOTS_HTML;
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      // 已经有确定结果（真正的回复，或彻底放弃等待）时用这个：纯文字，不再带动态点。
+      function setFinalText(el, text) {
+        el.textContent = text;
+        messages.scrollTop = messages.scrollHeight;
+      }
+
       // ---------------- 产品选择：不同产品各自有独立题库，提问前先确定产品 ----------------
 
       const PRODUCT_KEY = "fuyunhon_product_id";
@@ -393,11 +452,16 @@
         // matched=true 说明题库已命中、AI 正在准备自动发送，这个等待过程从头到尾都跟"人工客服"无关，
         // 全程只应该出现"AI"相关的话术，绝不能出现"转人工/人工客服正忙"这类文案，避免误导客户。
         // 只有 matched=false（题库未命中，真正转人工）时，才会在等太久后提示"人工客服正忙"。
+        // 提示切换后仍在继续轮询，所以还是带跳动点的"思考中"样式，不是最终结果。
         const busyTimer = matched
-          ? null
+          ? setTimeout(() => {
+              if (!answered) {
+                setThinkingText(loadingEl, "AI 思考时间较长，请耐心等待");
+              }
+            }, 10000)
           : setTimeout(() => {
               if (!answered) {
-                loadingEl.textContent = "人工客服正忙，请您稍后查看回复，感谢您的耐心等待～";
+                setThinkingText(loadingEl, "人工客服正忙，请您稍后查看回复，感谢您的耐心等待～");
               }
             }, 10000);
 
@@ -408,18 +472,21 @@
             const data = await res.json();
             if (data.status === "answered" && data.answer) {
               answered = true;
-              if (busyTimer) clearTimeout(busyTimer);
-              loadingEl.textContent = data.answer;
+              clearTimeout(busyTimer);
+              setFinalText(loadingEl, data.answer);
               return;
             }
           } catch (err) {
             // 网络抖动时静默重试
           }
         }
-        if (busyTimer) clearTimeout(busyTimer);
-        loadingEl.textContent = matched
-          ? "AI 思考时间较长，请您稍后重新查看回复，感谢您的耐心等待～"
-          : "客服暂时繁忙，请稍后重新提问或换个方式联系我们。";
+        clearTimeout(busyTimer);
+        setFinalText(
+          loadingEl,
+          matched
+            ? "AI 暂时无法给出回复，请稍后重新提问，或联系人工客服协助处理。"
+            : "客服暂时繁忙，请稍后重新提问或换个方式联系我们。"
+        );
       }
 
       form.addEventListener("submit", async (event) => {
@@ -433,23 +500,25 @@
 
         input.value = "";
         addMessage(text, "user");
-        const loading = addMessage("AI 正在分析您的问题...", "bot");
+        const loading = addMessage("", "bot");
+        setThinkingText(loading, "AI 正在分析您的问题...");
         send.disabled = true;
 
         try {
           const data = await ask(text);
           if (data.status === "answered") {
-            loading.textContent = data.answer;
+            setFinalText(loading, data.answer);
           } else {
             // 人机协同模式下，若题库已命中（AI 已生成建议、进入自动发送倒计时），
             // 客户看到的应该是"AI 思考中"，不是"转人工"提示——只有未命中时才是真正转人工。
-            loading.textContent = data.matched
-              ? "AI 正在思考您的问题，请稍候..."
-              : "已收到您的问题，正在为您转接人工客服，请稍候...";
+            setThinkingText(
+              loading,
+              data.matched ? "AI 正在思考您的问题，请稍候..." : "已收到您的问题，正在为您转接人工客服，请稍候..."
+            );
             await pollAnswer(data.conversation_id, loading, data.matched);
           }
         } catch (err) {
-          loading.textContent = `出错了：${err.message}`;
+          setFinalText(loading, `出错了：${err.message}`);
         } finally {
           send.disabled = false;
           input.focus();
