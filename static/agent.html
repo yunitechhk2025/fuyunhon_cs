@@ -946,6 +946,22 @@
           </div>
         </div>
 
+        <div id="admin-notify-email-section" style="display: none;">
+          <h4>邮件提醒收件人</h4>
+          <p style="font-size: 12px; color: #94a1b8; margin: 0 0 10px; line-height: 1.6;">
+            题库未命中/全人工模式的即时提醒，以及下面的定时汇总提醒，都会发到这个邮箱；多个邮箱用英文逗号分隔。
+          </p>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <input
+              id="notify-email-input"
+              type="text"
+              placeholder="例如：a@example.com, b@example.com"
+              style="flex: 1; min-width: 220px; padding: 9px 10px; border: 1px solid #d7dfec; border-radius: 8px; font-size: 13px;"
+            />
+            <button class="btn btn-primary" id="save-notify-email-btn">保存</button>
+          </div>
+        </div>
+
         <div id="admin-reminder-section" style="display: none;">
           <h4>待处理队列定时提醒（邮件）</h4>
           <p style="font-size: 12px; color: #94a1b8; margin: 0 0 10px; line-height: 1.6;">
@@ -1008,6 +1024,9 @@
       const adminTimeoutSection = document.getElementById("admin-timeout-section");
       const collabTimeoutInput = document.getElementById("collab-timeout-input");
       const saveTimeoutBtn = document.getElementById("save-timeout-btn");
+      const adminNotifyEmailSection = document.getElementById("admin-notify-email-section");
+      const notifyEmailInput = document.getElementById("notify-email-input");
+      const saveNotifyEmailBtn = document.getElementById("save-notify-email-btn");
       const adminReminderSection = document.getElementById("admin-reminder-section");
       const reminderToggleBtn = document.getElementById("reminder-toggle-btn");
       const reminderIntervalInput = document.getElementById("reminder-interval-input");
@@ -1141,6 +1160,7 @@
         adminAgentsSection.style.display = agent.role === "admin" ? "block" : "none";
         adminTimeoutSection.style.display = agent.role === "admin" ? "block" : "none";
         adminReminderSection.style.display = agent.role === "admin" ? "block" : "none";
+        adminNotifyEmailSection.style.display = agent.role === "admin" ? "block" : "none";
         refreshMode();
         await refreshProducts();
         refreshSessions();
@@ -1148,6 +1168,7 @@
           refreshAgents();
           refreshCollabTimeout();
           refreshReminderSettings();
+          refreshNotifyEmail();
         }
         connectWebSocket(token);
       }
@@ -1233,6 +1254,32 @@
         try {
           await apiFetch("/api/collab-timeout", { method: "POST", body: JSON.stringify({ seconds }) });
           showToast("已保存自动发送时间设置");
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+
+      // ---------------- 邮件提醒收件人 ----------------
+
+      async function refreshNotifyEmail() {
+        try {
+          const data = await apiFetch("/api/notify-email");
+          notifyEmailInput.value = data.email || "";
+        } catch (err) {
+          // ignore
+        }
+      }
+
+      saveNotifyEmailBtn.addEventListener("click", async () => {
+        const email = notifyEmailInput.value.trim();
+        if (!email) {
+          showToast("请输入收件邮箱");
+          return;
+        }
+        try {
+          const data = await apiFetch("/api/notify-email", { method: "POST", body: JSON.stringify({ email }) });
+          notifyEmailInput.value = data.email;
+          showToast("已保存收件邮箱");
         } catch (err) {
           showToast(err.message);
         }

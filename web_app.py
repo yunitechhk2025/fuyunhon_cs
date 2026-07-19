@@ -15,7 +15,7 @@ from pydantic import BaseModel
 import database
 from auth import create_token, decode_token, get_current_agent, require_admin
 from doc_rag_chatbot import DocRagBot
-from email_utils import send_email
+from email_utils import DEFAULT_NOTIFY_EMAIL_TO, send_email
 from excel_rag_chatbot import AnswerResult, ExcelFaqRagBot
 from ws_manager import manager
 
@@ -76,6 +76,10 @@ class CollabTimeoutRequest(BaseModel):
 class ReminderSettingsRequest(BaseModel):
     enabled: bool
     interval_minutes: float
+
+
+class NotifyEmailRequest(BaseModel):
+    email: str
 
 
 class CreateAgentRequest(BaseModel):
@@ -225,6 +229,13 @@ async def _auto_send_after_timeout(conversation_id: int, ai_answer: str, timeout
         print(f"[warn] 协同模式自动发送失败: {exc}", file=sys.stderr)
 
 
+def _notify_recipient() -> Optional[str]:
+    """收件邮箱以后台「工作台设置」里配置的为准；管理员还没在后台配置过时，
+    返回 None，交给 email_utils.send_email 自己回退到环境变量 NOTIFY_EMAIL_TO 的默认值。"""
+    email = database.get_setting("notify_email_to")
+    return email.strip() if email and email.strip() else None
+
+
 async def _notify_agent_unresolved(conversation_id: int, product: str, question: str, mode: str, reason: str) -> None:
     """客户的问题需要人工处理时（题库未命中，或全人工模式下的任意问题），邮件提醒客服/管理员。
     邮件发送是阻塞的网络调用，用线程池执行，避免拖慢客户端提问接口的响应。"""
@@ -240,7 +251,7 @@ async def _notify_agent_unresolved(conversation_id: int, product: str, question:
         f"请登录客服工作台查看并回复：/agent\n"
     )
     try:
-        await asyncio.to_thread(send_email, subject, body)
+        await asyncio.to_thread(send_email, subject, body, _notify_recipient())
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] 转人工提醒邮件发送失败: {exc}", file=sys.stderr)
 
@@ -280,7 +291,7 @@ async def _reminder_loop() -> None:
                     lines.append(f"- 对话 #{item['id']}（{label}）：{item['question']}")
                 lines.append("")
                 lines.append("请登录客服工作台查看并回复：/agent")
-                await asyncio.to_thread(send_email, subject, "\n".join(lines))
+                await asyncio.to_thread(send_email, subject, "\n".join(lines), _notify_recipient())
 
             database.set_setting("reminder_last_sent_at", now.strftime("%Y-%m-%dT%H:%M:%SZ"))
         except Exception as exc:  # noqa: BLE001
@@ -332,6 +343,24 @@ def set_collab_timeout(req: CollabTimeoutRequest, agent: dict = Depends(require_
         raise HTTPException(status_code=400, detail="超时时间需在 1-300 秒之间")
     database.set_setting("collab_auto_send_seconds", str(req.seconds))
     return {"seconds": req.seconds}
+
+
+# ---------------- 邮件提醒收件邮箱（即时提醒 + 定时提醒共用） ----------------
+
+@app.get("/api/notify-email")
+def get_notify_email() -> dict:
+    email = database.get_setting("notify_email_to") or os.getenv("NOTIFY_EMAIL_TO", DEFAULT_NOTIFY_EMAIL_TO)
+    return {"email": email}
+
+
+@app.post("/api/notify-email")
+def set_notify_email(req: NotifyEmailRequest, agent: dict = Depends(require_admin)) -> dict:
+    addresses = [addr.strip() for addr in req.email.split(",") if addr.strip()]
+    if not addresses or any("@" not in addr for addr in addresses):
+        raise HTTPException(status_code=400, detail="请输入有效的邮箱地址，多个邮箱用英文逗号分隔")
+    normalized = ", ".join(addresses)
+    database.set_setting("notify_email_to", normalized)
+    return {"email": normalized}
 
 
 # ---------------- 待处理队列定时提醒（邮件） ----------------
