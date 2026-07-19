@@ -218,6 +218,30 @@ def _normalize_product(product: Optional[str]) -> str:
     return product if product in PRODUCTS else DEFAULT_PRODUCT
 
 
+# 客户提问前的单纯寒暄/打招呼（"你好""在吗"之类），不是真正的咨询问题，不应该被判定为
+# "题库未命中"而转人工/发提醒邮件——直接由 AI 打个招呼、引导客户说出具体问题即可。
+# 仅匹配"整条消息都是寒暄用语"的情况；只要寒暄后面还带了具体问题（比如"你好，能天天用吗"），
+# 就不会命中这里，会正常进入各模式原本的题库检索流程。
+_GREETING_ONLY_PATTERN = re.compile(
+    r"^[\s，,。.！!？?~～]*"
+    r"(你好|您好|哈喽|哈啰|hi|hello|hey|在吗|在么|在不在|有人吗|有人在吗|"
+    r"有客服吗|客服在吗|请问有人吗|早上好|上午好|中午好|下午好|晚上好)"
+    r"[\s，,。.！!？?~～]*$",
+    re.IGNORECASE,
+)
+
+
+def _is_pure_greeting(text: str) -> bool:
+    return bool(_GREETING_ONLY_PATTERN.match(text.strip()))
+
+
+def _greeting_reply(product: str) -> str:
+    label = PRODUCTS.get(product, {}).get("label", "")
+    if label:
+        return f"您好，我是澳洲肤润康「{label}」的 AI 客服，请问有什么想了解的呢？您可以直接告诉我想咨询的问题，我马上为您查询～"
+    return "您好，我是澳洲肤润康 AI 客服，请问有什么想了解的呢？您可以直接告诉我想咨询的问题，我马上为您查询～"
+
+
 def _ai_model(model: Optional[str]) -> str:
     return model or os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
 
@@ -564,6 +588,14 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
     product = _normalize_product(req.product)
     mode = database.get_setting("global_mode", "auto")
     conversation_id = database.create_conversation(session_id, question, mode, _client_ip(request), product)
+
+    # 单纯打招呼（"你好""在吗"等，不带具体问题）：任何模式下都直接由 AI 回一句问候语并结束，
+    # 不算"题库未命中"，不转人工、不发邮件提醒——避免客户每次只是打个招呼就惊动客服。
+    if _is_pure_greeting(question):
+        greeting_text = _greeting_reply(product)
+        database.set_retrieval_info(conversation_id, True, "问候语", greeting_text, 1.0)
+        database.mark_answered(conversation_id, greeting_text)
+        return AskResponse(conversation_id=conversation_id, status="answered", answer=greeting_text, mode=mode)
 
     # 未命中题库（包括该产品尚未建立题库的情况）时，任何模式都不允许 AI 直接回复或编造答案，
     # 统一转人工处理；只有确认命中题库时，才允许由 AI 直接回复（全AI模式）或生成建议（协同模式）。
