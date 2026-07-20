@@ -25,6 +25,8 @@ from ws_manager import manager
 DEFAULT_EXCEL = "2026.01.26_肤润康-常见咨询问题_v2(1).xls"
 UREA_DOC = "urea_hand_cream_info.md"
 DEFAULT_MODEL = "qwen3.6-flash"
+# 所有邮件通知的主题统一带上品牌名，方便客服在收件箱里一眼认出是哪个客服系统发的。
+BRAND_NAME = "澳洲肤润康"
 VALID_MODES = {"auto", "manual", "collab"}
 MODE_LABELS = {"auto": "全AI模式", "manual": "全人工模式", "collab": "人机协同模式"}
 DEFAULT_COLLAB_AUTO_SEND_SECONDS = 5
@@ -432,7 +434,7 @@ async def _notify_agent_unresolved(conversation_id: int, product: str, question:
     邮件发送是阻塞的网络调用，用线程池执行，避免拖慢客户端提问接口的响应。"""
     product_label = PRODUCTS.get(product, {}).get("label", product or "未知产品")
     mode_label = MODE_LABELS.get(mode, mode)
-    subject = f"【客服提醒】有客户问题待人工处理（对话 #{conversation_id}）"
+    subject = f"【{BRAND_NAME} 客服提醒】有客户问题待人工处理（对话 #{conversation_id}）"
     body = (
         f"产品：{product_label}\n"
         f"工作模式：{mode_label}\n"
@@ -454,7 +456,7 @@ async def _notify_customer_email_left(
     客户不留邮箱则此函数完全不会被调用，不会触发任何邮件。"""
     product_label = PRODUCTS.get(product, {}).get("label", product or "未知产品")
     mode_label = MODE_LABELS.get(mode, mode)
-    subject = f"【客服提醒】客户留下邮箱待人工回复（对话 #{conversation_id}）"
+    subject = f"【{BRAND_NAME} 客服提醒】客户留下邮箱待人工回复（对话 #{conversation_id}）"
     body = (
         f"产品：{product_label}\n"
         f"工作模式：{mode_label}\n"
@@ -497,7 +499,7 @@ async def _reminder_loop() -> None:
             if queue:
                 customer_count = len({item["session_id"] for item in queue})
                 question_count = len(queue)
-                subject = f"【客服定时提醒】当前有 {customer_count} 位客户、{question_count} 个问题待处理"
+                subject = f"【{BRAND_NAME} 客服定时提醒】当前有 {customer_count} 位客户、{question_count} 个问题待处理"
                 lines = [subject, ""]
                 for item in queue:
                     label = PRODUCTS.get(item["product"], {}).get("label", item["product"] or "未知产品")
@@ -544,7 +546,7 @@ async def _daily_report_loop() -> None:
 
             start_utc, end_utc, report_date_label = _daily_report_range_utc(now_hk)
             stats = database.get_daily_stats(start_utc, end_utc)
-            subject = f"【澳洲肤润康 AI 客服数据日报】{report_date_label}"
+            subject = f"【{BRAND_NAME} AI 客服数据日报】{report_date_label}"
             body = (
                 f"报表日期：{report_date_label}（香港时间 00:00-24:00）\n\n"
                 f"咨询用户数：{stats['user_count']} 人\n"

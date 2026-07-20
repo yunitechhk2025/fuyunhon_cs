@@ -674,8 +674,11 @@
         return data;
       }
 
+      // 不设置"等太久就放弃"的极端兜底：AI 的反馈不会超过 10 秒这个量级（matched=true 时），
+      // 涉及转人工的情况（matched=false）在 10 秒时已经直接进入"留邮箱/补充问题"的转人工机制，
+      // 客户随时可以在那个入口留下联系方式，不需要再额外设一个"等 10 分钟后放弃"的兜底文案；
+      // 这里持续轮询直到客服/AI 给出最终回复为止，客户不需要手动刷新页面。
       async function pollAnswer(conversationId, loadingEl, matched, skipBusyTimer) {
-        const maxAttempts = 200; // 约 10 分钟（每 3 秒一次）
         let answered = false;
 
         // matched=true 说明题库已命中、AI 正在准备自动发送，这个等待过程从头到尾都跟"人工客服"无关，
@@ -697,7 +700,7 @@
               }
             }, 10000);
 
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        while (true) {
           await new Promise((resolve) => setTimeout(resolve, 3000));
           try {
             const res = await fetch(`/api/conversations/${conversationId}`);
@@ -711,14 +714,6 @@
           } catch (err) {
             // 网络抖动时静默重试
           }
-        }
-        clearTimeout(busyTimer);
-        if (matched) {
-          setFinalText(loadingEl, "AI 暂时无法给出回复，请稍后重新提问，或联系人工客服协助处理。");
-        } else if (!loadingEl.querySelector(".email-capture")) {
-          // 未命中场景下，若客户还没提交邮箱，留邮箱的入口继续保留，方便客户随时填写；
-          // 只有客户已经提交过（邮箱输入框已被移除）才会走到这里，用纯文字收尾。
-          setFinalText(loadingEl, "客服暂时繁忙，请稍后重新提问或换个方式联系我们。");
         }
       }
 
