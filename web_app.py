@@ -440,7 +440,7 @@ async def _notify_customer_email_left(
     visitor_label = f"访客{visitor_no}" if visitor_no else "未知访客"
     subject = f"【{BRAND_NAME} 客服提醒】{visitor_label}留下邮箱待人工回复（对话 #{conversation_id}）"
     body = (
-        f"客户：{visitor_label}（跟客服工作台会话列表里的编号一致，方便直接定位到对应对话）\n"
+        f"客户：{visitor_label}\n"
         f"产品：{product_label}\n"
         f"工作模式：{mode_label}\n"
         f"客户提问：{question}\n"
