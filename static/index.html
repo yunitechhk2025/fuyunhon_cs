@@ -170,6 +170,26 @@
         color: #6b7686;
       }
 
+      /* 客户主动说"转人工"后，需要客户补充说明具体想咨询的问题，跟留邮箱输入框共用同一套外观。 */
+      .transfer-question-input {
+        display: block;
+        width: 100%;
+        min-height: 60px;
+        margin-top: 10px;
+        border: 1px solid #d7dfec;
+        border-radius: 10px;
+        padding: 9px 10px;
+        font: inherit;
+        font-size: 14px;
+        outline: none;
+        resize: vertical;
+        box-sizing: border-box;
+      }
+
+      .transfer-question-input:focus {
+        border-color: #2f6fed;
+      }
+
       .composer {
         display: flex;
         gap: 12px;
@@ -397,6 +417,9 @@
       const currentProductLabel = document.getElementById("current-product-label");
       const switchProductLink = document.getElementById("switch-product-link");
 
+      // 留邮箱 / 补充问题这两个入口共用同一套邮箱格式校验，只有真实格式的邮箱才会被接受。
+      const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
       const SESSION_KEY = "fuyunhon_session_id";
       function getSessionId() {
         let id = localStorage.getItem(SESSION_KEY);
@@ -477,8 +500,6 @@
           messages.scrollTop = messages.scrollHeight;
         }
 
-        const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
         submitBtn.addEventListener("click", async () => {
           const email = emailInput.value.trim();
           if (!EMAIL_RE.test(email)) {
@@ -495,6 +516,78 @@
             if (!res.ok) throw new Error();
             row.remove();
             showStatus("已将您的问题更新给人工客服，请耐心等待客服通过邮件回复您～");
+          } catch (err) {
+            submitBtn.disabled = false;
+            showStatus("提交失败，请稍后重试");
+          }
+        });
+
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      // 客户直接说"转人工"之类明确要求转接真人："转人工"这几个字本身不是一句有实际内容的
+      // 提问，客服光看这个不知道要处理什么，所以要请客户再描述一次具体想咨询的问题（必填）；
+      // 邮箱选填，留下真实格式的邮箱后客服可以直接通过邮件回复，不填也不影响问题内容的更新。
+      function renderTransferQuestionPrompt(el, conversationId) {
+        el.innerHTML = "";
+
+        const textEl = document.createElement("div");
+        textEl.textContent = "好的，请您简单描述一下想咨询的具体问题，我们马上为您转接人工客服～";
+        el.appendChild(textEl);
+
+        const questionInput = document.createElement("textarea");
+        questionInput.className = "transfer-question-input";
+        questionInput.placeholder = "请输入您想咨询的问题";
+        el.appendChild(questionInput);
+
+        const row = document.createElement("div");
+        row.className = "email-capture";
+
+        const emailInput = document.createElement("input");
+        emailInput.type = "email";
+        emailInput.placeholder = "您的邮箱（选填，方便客服邮件回复您）";
+
+        const submitBtn = document.createElement("button");
+        submitBtn.type = "button";
+        submitBtn.textContent = "提交";
+
+        row.appendChild(emailInput);
+        row.appendChild(submitBtn);
+        el.appendChild(row);
+
+        const statusEl = document.createElement("div");
+        statusEl.className = "email-capture-status";
+        statusEl.style.display = "none";
+        el.appendChild(statusEl);
+
+        function showStatus(text) {
+          statusEl.textContent = text;
+          statusEl.style.display = "block";
+          messages.scrollTop = messages.scrollHeight;
+        }
+
+        submitBtn.addEventListener("click", async () => {
+          const question = questionInput.value.trim();
+          if (!question) {
+            showStatus("请输入您想咨询的问题");
+            return;
+          }
+          const email = emailInput.value.trim();
+          if (email && !EMAIL_RE.test(email)) {
+            showStatus("邮箱格式不正确，请检查后重试，或留空不填");
+            return;
+          }
+          submitBtn.disabled = true;
+          try {
+            const res = await fetch(`/api/conversations/${conversationId}/transfer-question`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ question, email: email || null }),
+            });
+            if (!res.ok) throw new Error();
+            questionInput.remove();
+            row.remove();
+            showStatus("已将您的问题更新给人工客服，请耐心等待客服回复～");
           } catch (err) {
             submitBtn.disabled = false;
             showStatus("提交失败，请稍后重试");
@@ -648,10 +741,11 @@
           const data = await ask(text);
           if (data.status === "answered") {
             setFinalText(loading, data.answer);
-          } else if (data.need_email) {
+          } else if (data.need_transfer_details) {
             // 客户直接说了"转人工"之类，明确要求转接真人：不用再演"AI 思考/等待"这段过程，
-            // 直接展示留邮箱入口，同时仍在后台继续轮询，方便客服在工作台实时回复时也能收到。
-            renderLeaveEmailPrompt(loading, data.conversation_id);
+            // 直接请客户补充具体问题 + 选填邮箱，同时仍在后台继续轮询，方便客服在工作台
+            // 实时回复时也能收到。
+            renderTransferQuestionPrompt(loading, data.conversation_id);
             await pollAnswer(data.conversation_id, loading, false, true);
           } else {
             // 人机协同模式下，若题库已命中（AI 已生成建议、进入自动发送倒计时），

@@ -1135,6 +1135,12 @@
       let sessionMessages = []; // 当前打开会话的全部提问/回复，按时间顺序
       let activeFilter = "all";
 
+      // WebSocket 推送、5 秒兜底轮询都会触发整段消息列表重新渲染（renderThread），如果回复框的
+      // 内容完全依赖 DOM 现状，客服刚打几个字，下一次重新渲染就会把输入框整个替换掉、打的字全部
+      // 消失。这里用一个"草稿箱"按对话 id 缓存客服正在输入但还没发送的内容，重新渲染时优先取
+      // 草稿箱里的内容作为输入框初始值，发送成功或客服切走该对话后再清掉，避免草稿越攒越多。
+      const composeDrafts = {};
+
       function showToast(text) {
         toastEl.textContent = text;
         toastEl.classList.add("show");
@@ -1682,6 +1688,7 @@
         const isClaimedByOther = item.claimed_by && !isMine;
 
         if (item.status === "answered") {
+          delete composeDrafts[item.id];
           const autoSent = !item.answered_by && item.answered_by_name;
           html += `
             <div class="bubble-row agent">
@@ -1689,21 +1696,30 @@
               <div class="bubble-avatar agent" title="${autoSent ? escapeHtml(item.answered_by_name) : "客服"}">${autoSent ? "🤖" : "🎧"}</div>
             </div>`;
         } else {
+          // 人机协同模式下题库命中：AI 已经生成建议并进入自动发送倒计时，这类问题不算"转人工"，
+          // 不需要客服人工回复，所以不提供回复框——只有真正需要人工处理的问题（题库未命中/全人工
+          // 模式）才会走到下面的回复框分支。
+          const aiHandledInCollab = item.mode_used === "collab" && item.matched === 1;
+
           if (item.ai_suggested_answer) {
             html += `
               <div class="draft-wrap">
-                <div class="draft-label">💡 AI 建议回复（未发送，可编辑后再发送）</div>
+                <div class="draft-label">💡 AI 建议回复（未发送，将自动发送给客户）</div>
                 <div class="draft-box">${escapeHtml(item.ai_suggested_answer)}</div>
               </div>`;
           }
           if (item.status === "pending" && item.mode_used === "collab" && item.auto_send_at) {
             html += `
               <div class="countdown-note" data-deadline="${escapeHtml(item.auto_send_at)}">
-                ⏳ 若无人认领，AI 建议将在 <span class="countdown-secs">--</span> 秒后自动发送给客户
+                ⏳ AI 建议将在 <span class="countdown-secs">--</span> 秒后自动发送给客户
               </div>`;
           }
-          // 无论是否已认领、无论哪种模式，都始终提供输入框，客服随时可以直接回复客户
-          html += composeAreaHtml(item, isMine, isClaimedByOther);
+          if (aiHandledInCollab) {
+            delete composeDrafts[item.id];
+          } else {
+            // 无论是否已认领，只要是需要人工处理的问题，都始终提供输入框，客服随时可以直接回复客户
+            html += composeAreaHtml(item, isMine, isClaimedByOther);
+          }
         }
 
         html += `</div>`;
@@ -1770,7 +1786,9 @@
       function composeAreaHtml(item, isMine, isClaimedByOther) {
         // 不管当前是否已认领、认领人是谁，始终提供输入框：客服可以随时直接回复客户，
         // "认领"只是一个可选的协作提示（让其他客服知道有人在处理），不是回复的前提条件。
-        const prefill = item.ai_suggested_answer || "";
+        // 草稿箱里如果有客服正在输入但还没发送的内容，优先用草稿箱的内容，不用 AI 建议覆盖掉。
+        const hasDraft = Object.prototype.hasOwnProperty.call(composeDrafts, item.id);
+        const prefill = hasDraft ? composeDrafts[item.id] : item.ai_suggested_answer || "";
         let warnHtml = "";
         let actionsHtml = "";
 
@@ -1796,6 +1814,15 @@
       }
 
       function bindComposeActions() {
+        threadEl.querySelectorAll("[data-answer-input]").forEach((textarea) => {
+          const id = textarea.getAttribute("data-answer-input");
+          // 客服每敲一个字都同步写入草稿箱，这样即使下一次轮询/推送把整段消息列表重新渲染掉，
+          // 重建出来的输入框也能读到草稿箱里的最新内容，不会出现"打字打到一半突然清空"的情况。
+          textarea.addEventListener("input", () => {
+            composeDrafts[id] = textarea.value;
+          });
+        });
+
         threadEl.querySelectorAll("[data-action]").forEach((btn) => {
           const id = btn.getAttribute("data-id");
           const action = btn.getAttribute("data-action");
@@ -1816,6 +1843,7 @@
                   method: "POST",
                   body: JSON.stringify({ answer }),
                 });
+                delete composeDrafts[id];
                 showToast("回复已发送");
               }
               await refreshAll();

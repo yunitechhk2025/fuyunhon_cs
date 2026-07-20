@@ -66,8 +66,8 @@ class AskResponse(BaseModel):
     # 表示题库已命中、AI 已生成建议并已安排自动发送倒计时，客户此时应看到"AI 思考中"而不是"转人工"提示。
     matched: bool = False
     # 仅在 status='pending' 时可能为 True：客户直接说了"转人工"之类明确要求转接真人，
-    # 客户端应立即展示"留邮箱"入口，不必再经历"AI 思考/等待 10 秒"这段过程。
-    need_email: bool = False
+    # 客户端应立即展示"请描述具体问题 + 留邮箱（选填）"的入口，不必再经历"AI 思考/等待 10 秒"这段过程。
+    need_transfer_details: bool = False
 
 
 class LoginRequest(BaseModel):
@@ -104,6 +104,14 @@ class NotifyEmailRequest(BaseModel):
 
 class LeaveEmailRequest(BaseModel):
     email: str
+
+
+class TransferQuestionRequest(BaseModel):
+    # 客户主动说"转人工"之后，需要客户再描述一次具体想咨询的问题（"转人工"本身不是一句
+    # 有实际内容的提问，客服光看这几个字不知道要处理什么）；邮箱选填，留下真实格式的邮箱
+    # 才会真正发邮件通知客服，不留邮箱也不影响问题内容的更新和客服在工作台实时看到。
+    question: str
+    email: Optional[str] = None
 
 
 class IrrelevantFilterSettingsRequest(BaseModel):
@@ -536,7 +544,7 @@ async def _daily_report_loop() -> None:
 
             start_utc, end_utc, report_date_label = _daily_report_range_utc(now_hk)
             stats = database.get_daily_stats(start_utc, end_utc)
-            subject = f"【肤润康 AI 客服数据日报】{report_date_label}"
+            subject = f"【澳洲肤润康 AI 客服数据日报】{report_date_label}"
             body = (
                 f"报表日期：{report_date_label}（香港时间 00:00-24:00）\n\n"
                 f"咨询用户数：{stats['user_count']} 人\n"
@@ -751,7 +759,12 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
         conversation = database.get_conversation(conversation_id)
         await manager.broadcast({"type": "new_question", "conversation": dict(conversation)})
         return AskResponse(
-            conversation_id=conversation_id, status="pending", answer=None, mode=mode, matched=False, need_email=True
+            conversation_id=conversation_id,
+            status="pending",
+            answer=None,
+            mode=mode,
+            matched=False,
+            need_transfer_details=True,
         )
 
     # 未命中题库（包括该产品尚未建立题库的情况）时，任何模式都不允许 AI 直接回复或编造答案，
@@ -857,6 +870,42 @@ async def leave_customer_email(conversation_id: int, req: LeaveEmailRequest) -> 
             email,
         )
     )
+    return {"success": True}
+
+
+@app.post("/api/conversations/{conversation_id}/transfer-question")
+async def submit_transfer_question(conversation_id: int, req: TransferQuestionRequest) -> dict:
+    """客户主动说"转人工"之后，补充说明具体想咨询的问题（必填，替换掉"转人工"这句没有实际
+    内容的占位提问，方便客服知道要处理什么）；邮箱选填，留下真实格式的邮箱才会真正发邮件通知
+    客服，不留邮箱则只更新问题内容、不触发邮件，客服仍能在工作台实时看到更新后的问题。"""
+    question = req.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="请输入您想咨询的问题")
+
+    email = (req.email or "").strip()
+    if email and not _is_valid_email(email):
+        raise HTTPException(status_code=400, detail="请输入有效的邮箱地址，或留空")
+
+    conversation = database.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="对话不存在")
+
+    updated = database.set_question(conversation_id, question)
+    if not updated:
+        raise HTTPException(status_code=404, detail="对话不存在")
+
+    if email:
+        database.set_customer_email(conversation_id, email)
+
+    conversation = database.get_conversation(conversation_id)
+    await manager.broadcast({"type": "conversation_updated", "conversation": dict(conversation)})
+
+    if email:
+        asyncio.create_task(
+            _notify_customer_email_left(
+                conversation_id, conversation["product"], question, conversation["mode_used"], email
+            )
+        )
     return {"success": True}
 
 

@@ -218,6 +218,20 @@ def set_ai_suggestion(conversation_id: int, suggestion: str, score: float) -> No
         )
 
 
+def set_question(conversation_id: int, question: str) -> bool:
+    """客户主动说"转人工"之后补充具体问题时，用真实问题内容替换掉"转人工"这句占位提问，
+    方便客服在工作台直接看懂客户想咨询什么。返回 False 表示该对话不存在。"""
+    with get_conn() as conn:
+        row = conn.execute("SELECT id FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        if row is None:
+            return False
+        conn.execute(
+            "UPDATE conversations SET question = ?, updated_at = datetime('now') WHERE id = ?",
+            (question, conversation_id),
+        )
+        return True
+
+
 def set_customer_email(conversation_id: int, email: str) -> bool:
     """记录客户在"人工客服正忙"提示下主动留下的邮箱。返回 False 表示该对话不存在。"""
     with get_conn() as conn:
