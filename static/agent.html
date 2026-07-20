@@ -1710,12 +1710,28 @@
         return html;
       }
 
+      // renderThread 每次都会整段重新渲染消息列表（WebSocket 推送、5 秒兜底轮询都会触发），
+      // 如果每次都无条件把滚动条拉到最底部，客服刚往上滑看历史消息，几秒后就会被强行拉回底部。
+      // 这里记录"上一次渲染的是哪个会话"，以及"重新渲染前客服是否本来就停留在底部附近"：
+      // 只有切换到新会话，或者客服本来就在底部（说明是在跟着看最新消息），才自动滚到底部；
+      // 否则保留客服原来的滚动位置，不打断正在往上翻看历史记录的操作。
+      let lastThreadSessionId = null;
+      const NEAR_BOTTOM_THRESHOLD_PX = 80;
+
       function renderThread() {
         const session = sessions.find((s) => s.session_id === selectedSessionId);
         if (!session) {
+          lastThreadSessionId = null;
           threadEl.innerHTML = `<div class="thread-empty">从左侧选择一个用户，查看完整对话记录</div>`;
           return;
         }
+
+        const isSessionSwitch = lastThreadSessionId !== selectedSessionId;
+        const prevScrollEl = document.getElementById("thread-messages-scroll");
+        const wasNearBottom =
+          !prevScrollEl ||
+          prevScrollEl.scrollHeight - prevScrollEl.scrollTop - prevScrollEl.clientHeight <= NEAR_BOTTOM_THRESHOLD_PX;
+        const prevScrollTop = prevScrollEl ? prevScrollEl.scrollTop : 0;
 
         const header = `
           <div class="thread-header">
@@ -1740,7 +1756,15 @@
         }
 
         const scrollEl = document.getElementById("thread-messages-scroll");
-        if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
+        if (scrollEl) {
+          if (isSessionSwitch || wasNearBottom) {
+            scrollEl.scrollTop = scrollEl.scrollHeight;
+          } else {
+            // 客服正在往上翻看历史消息：保留原来的滚动位置，不要被这次刷新打断。
+            scrollEl.scrollTop = Math.min(prevScrollTop, scrollEl.scrollHeight);
+          }
+        }
+        lastThreadSessionId = selectedSessionId;
       }
 
       function composeAreaHtml(item, isMine, isClaimedByOther) {
