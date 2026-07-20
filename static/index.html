@@ -722,6 +722,16 @@
       // 不是全新打开的页面——这时才去后端把历史问答拉回来重新渲染成消息气泡；如果是全新标签页
       // （sessionStorage 还是空的），就不用调这个接口，直接从空白开始即可。注意这里直接读
       // sessionStorage，不调用 getSessionId()，避免"仅仅检查一下"就顺带创建了一个新会话 id。
+      // 服务端存的 created_at 是 SQLite 生成的 UTC 时间、不带时区后缀（跟 agent.html 里
+      // formatBeijingTime 解析的是同一种格式），这里按 UTC 解析后算出"已经过去多久"，
+      // 单位毫秒；解析失败（字段缺失/格式异常）时保守返回 0，等同于"当作刚提问"处理。
+      function elapsedMsSince(utcStr) {
+        if (!utcStr) return 0;
+        const date = new Date(`${utcStr.replace(" ", "T")}Z`);
+        if (Number.isNaN(date.getTime())) return 0;
+        return Math.max(0, Date.now() - date.getTime());
+      }
+
       async function restoreHistory() {
         const existingSessionId = sessionStorage.getItem(SESSION_KEY);
         if (!existingSessionId) return;
@@ -745,8 +755,10 @@
               renderTransferQuestionPrompt(bubble, item.id, item.mode_used === "manual", item.mode_used);
               return;
             }
-            // 还没有最终回复的问题（客服/AI 还在处理）：恢复出等待中的提示文案，并接回轮询，
-            // 拿到结果后会自动补上回复，客户不需要手动刷新第二次。
+            // 还没有最终回复的问题（客服/AI 还在处理）：恢复出等待中的提示文案，并接回轮询。
+            // elapsedMs 按提问时间算出这条对话已经等了多久，传给 pollAnswer 后它会用"剩余
+            // 时间"而不是重新数满 10 秒——不然客户明明已经等过、该看到的"人工客服正忙"提示
+            // 却要刷新一次就"倒退"回等待状态，再重新等 10 秒才会出现，看起来像是卡住了。
             const bubble = addMessage("", "bot");
             setThinkingText(
               bubble,
@@ -756,6 +768,7 @@
               question: item.question,
               emailProvided: item.has_email,
               email: item.email || "",
+              elapsedMs: elapsedMsSince(item.created_at),
             }).catch(() => {});
           });
         } catch (err) {
@@ -790,11 +803,17 @@
       // 弹一次"留邮箱"的输入框，10 秒后只需要换成一条静态确认消息即可。
       // options.email：客户具体留的邮箱地址，用于 10 秒后的确认文案里回显"客服会通过这个
       // 邮箱回复您"，而不是一句不带具体邮箱的泛泛确认。
+      // options.elapsedMs：这条对话已经等待了多久（刷新页面恢复历史记录时，按服务端记录的
+      // 提问时间算出来，而不是固定传 0）——避免每次刷新都重新从 0 开始数 10 秒，导致客户明明
+      // 已经等过、该出现的"人工客服正忙"提示却像是"倒退"了一样要重新等一遍才出现；真正是
+      // 刚提问、还没等过的场景传 0（或不传）即可，跟之前的效果完全一样。
       async function pollAnswer(conversationId, loadingEl, matched, mode, options) {
         options = options || {};
         const question = options.question || "";
         const emailProvided = !!options.emailProvided;
         const email = options.email || "";
+        const elapsedMs = Math.max(0, options.elapsedMs || 0);
+        const remainingMs = Math.max(0, 10000 - elapsedMs);
         let answered = false;
         // 未命中题库、真正转人工时，"人工客服正忙"提示会作为新的一条消息追加在下面，
         // 不会覆盖掉前面"已收到您的问题，正在为您转接人工客服，请稍候"这条消息——
@@ -818,7 +837,7 @@
               if (!answered) {
                 setFinalText(loadingEl, "AI 思考时间较长，请耐心等待");
               }
-            }, 10000)
+            }, remainingMs)
           : emailProvided
           ? setTimeout(() => {
               if (!answered) {
@@ -831,13 +850,13 @@
                   : "人工客服正忙，已通知客服，请耐心等待客服回复您～";
                 setFinalText(followUpEl, confirmText);
               }
-            }, 10000)
+            }, remainingMs)
           : setTimeout(() => {
               if (!answered) {
                 followUpEl = addMessage("", "bot");
                 renderLeaveEmailPrompt(followUpEl, conversationId, question);
               }
-            }, 10000);
+            }, remainingMs);
 
         while (true) {
           await new Promise((resolve) => setTimeout(resolve, 3000));

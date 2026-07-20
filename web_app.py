@@ -844,6 +844,11 @@ def list_customer_session_history(session_id: str) -> dict:
                 "has_email": bool(item["customer_email"]),
                 "email": item["customer_email"] or None,
                 "awaiting_transfer_details": bool(item["awaiting_transfer_details"]),
+                # 提问时间（UTC，不带时区后缀，前端按 UTC 解析）：客户端刷新恢复历史记录时，
+                # 用它算出这条对话已经等了多久，避免每次刷新都从 0 重新数 10 秒——不然客户
+                # 明明已经等过、已经看到过"人工客服正忙"提示，刷新一次就"倒退"回"AI 思考中"，
+                # 还要重新等满 10 秒才能看到本该早就出现的提示。
+                "created_at": item["created_at"],
             }
             for item in items
         ]
