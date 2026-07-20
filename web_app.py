@@ -808,6 +808,29 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
     )
 
 
+@app.get("/api/conversations/by-session/{session_id}")
+def list_customer_session_history(session_id: str) -> dict:
+    """客户端刷新页面时用来恢复聊天记录：session_id 相当于客户浏览器里的私有令牌（存
+    在 sessionStorage，随标签页关闭而清除，刷新页面时还在），知道它才能查到对应记录，
+    安全性与 /api/ask 现有的会话机制一致。这里只返回客户自己该看到的字段（问题、最终
+    回复、状态、模式、题库是否命中），不暴露 AI 建议草稿、题库匹配详情、客户 IP 等
+    客服工作台专用信息。"""
+    items = database.list_session_messages(session_id)
+    return {
+        "items": [
+            {
+                "id": item["id"],
+                "question": item["question"],
+                "answer": item["final_answer"],
+                "status": item["status"],
+                "mode_used": item["mode_used"],
+                "matched": bool(item["matched"]),
+            }
+            for item in items
+        ]
+    }
+
+
 @app.get("/api/conversations/{conversation_id}")
 def get_conversation_status(conversation_id: int) -> dict:
     conversation = database.get_conversation(conversation_id)

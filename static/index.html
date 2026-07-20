@@ -431,12 +431,15 @@
       // 留邮箱 / 补充问题这两个入口共用同一套邮箱格式校验，只有真实格式的邮箱才会被接受。
       const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+      // 用 sessionStorage（不是 localStorage）保存会话 id：sessionStorage 只在"当前标签页"存在，
+      // 刷新页面（F5）不会清空，正好可以借它的这段生命周期恢复聊天记录；但客户把标签页叉掉/
+      // 关闭浏览器后，sessionStorage 会被清空，下次再打开就是全新会话，不会继续沿用旧的历史记录。
       const SESSION_KEY = "fuyunhon_session_id";
       function getSessionId() {
-        let id = localStorage.getItem(SESSION_KEY);
+        let id = sessionStorage.getItem(SESSION_KEY);
         if (!id) {
           id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-          localStorage.setItem(SESSION_KEY, id);
+          sessionStorage.setItem(SESSION_KEY, id);
         }
         return id;
       }
@@ -681,7 +684,39 @@
         pickerOverlay.style.display = "flex";
       });
 
+      // 刷新页面时恢复聊天记录：sessionStorage 里已经有会话 id，说明这是"同一个标签页刷新"，
+      // 不是全新打开的页面——这时才去后端把历史问答拉回来重新渲染成消息气泡；如果是全新标签页
+      // （sessionStorage 还是空的），就不用调这个接口，直接从空白开始即可。注意这里直接读
+      // sessionStorage，不调用 getSessionId()，避免"仅仅检查一下"就顺带创建了一个新会话 id。
+      async function restoreHistory() {
+        const existingSessionId = sessionStorage.getItem(SESSION_KEY);
+        if (!existingSessionId) return;
+        try {
+          const res = await fetch(`/api/conversations/by-session/${encodeURIComponent(existingSessionId)}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          (data.items || []).forEach((item) => {
+            addMessage(item.question, "user");
+            if (item.status === "answered") {
+              addMessage(item.answer || "", "bot");
+              return;
+            }
+            // 还没有最终回复的问题（客服/AI 还在处理）：恢复出等待中的提示文案，并接回轮询，
+            // 拿到结果后会自动补上回复，客户不需要手动刷新第二次。
+            const bubble = addMessage("", "bot");
+            setThinkingText(
+              bubble,
+              item.matched ? "AI 正在思考您的问题，请稍候..." : "已收到您的问题，正在为您转接人工客服，请稍候"
+            );
+            pollAnswer(item.id, bubble, item.matched, false, item.mode_used).catch(() => {});
+          });
+        } catch (err) {
+          // 拉取历史失败时静默忽略，不影响客户继续正常提问
+        }
+      }
+
       initProducts();
+      restoreHistory();
 
       async function ask(message) {
         const res = await fetch("/api/ask", {

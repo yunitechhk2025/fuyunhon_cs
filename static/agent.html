@@ -601,7 +601,7 @@
         gap: 4px 8px;
         font-size: 11px;
         color: #a5aebd;
-        margin: 0 0 4px 42px;
+        margin: 6px 0 4px 42px;
         max-width: 80%;
       }
 
@@ -1147,6 +1147,28 @@
         return div.innerHTML;
       }
 
+      // 数据库里的时间（created_at / updated_at / last_activity）都是 SQLite datetime('now')
+      // 生成的 UTC 时间，格式形如 "2026-07-20 12:49:52"，不带时区标记。直接展示会让客服
+      // 看到的时间比北京时间晚 8 小时，容易误判问题是什么时候来的。这里统一先按 UTC 解析，
+      // 再转换成北京时间（Asia/Shanghai，固定 UTC+8，没有夏令时问题）展示。
+      function formatBeijingTime(utcStr) {
+        if (!utcStr) return "";
+        const date = new Date(`${utcStr.replace(" ", "T")}Z`);
+        if (Number.isNaN(date.getTime())) return utcStr;
+        return date
+          .toLocaleString("zh-CN", {
+            timeZone: "Asia/Shanghai",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: false,
+          })
+          .replace(/\//g, "-");
+      }
+
       function authHeaders() {
         return { Authorization: `Bearer ${currentToken}`, "Content-Type": "application/json" };
       }
@@ -1599,7 +1621,7 @@
                 <div class="conv-main">
                   <div class="conv-top">
                     <span class="conv-id">${escapeHtml(visitorLabel(session))}</span>
-                    <span class="conv-time">${session.last_activity || ""}</span>
+                    <span class="conv-time">${formatBeijingTime(session.last_activity)}</span>
                   </div>
                   <div class="conv-question">${escapeHtml(session.last_question || "")}</div>
                   <div class="conv-badges"><span class="badge product">📦 ${escapeHtml(productLabel(session.last_product))}</span><span class="badge neutral">共${session.message_count}条</span>${sessionStatusBadge(session)}</div>
@@ -1668,15 +1690,15 @@
 
         let html = `
           <div class="bubble-block" data-msg-id="${item.id}">
-            <div class="msg-meta">
-              <span>#${item.id} · ${item.created_at || ""}</span>
-              <span>${productBadge}${modeBadge}${statusBadge}${emailBadge}</span>
-            </div>
             <div class="bubble-row customer">
               <div class="bubble-avatar customer" title="客户">🧑</div>
               <div class="bubble customer">${escapeHtml(item.question)}</div>
             </div>
-            ${renderIntentBlock(item, item.status === "answered" ? "现有题库/资料中暂无对应说明。" : "现有题库/资料中暂无对应说明，请客服根据实际情况人工回复，或补充资料后重新检索。")}`;
+            ${renderIntentBlock(item, item.status === "answered" ? "现有题库/资料中暂无对应说明。" : "现有题库/资料中暂无对应说明，请客服根据实际情况人工回复，或补充资料后重新检索。")}
+            <div class="msg-meta">
+              <span>#${item.id} · ${formatBeijingTime(item.created_at)}</span>
+              <span>${productBadge}${modeBadge}${statusBadge}${emailBadge}</span>
+            </div>`;
 
         if (item.status === "answered") {
           delete composeDrafts[item.id];
@@ -1756,7 +1778,7 @@
               <button class="mobile-back-btn" id="mobile-back-btn" type="button">← 返回列表</button>
               <div style="min-width: 0;">
                 <div class="title">客户会话 · ${escapeHtml(visitorLabel(session))}</div>
-                <div class="sub">共 ${session.message_count} 条提问 · 最近活跃 ${session.last_activity || ""}${session.client_ip ? ` · IP ${escapeHtml(session.client_ip)}` : ""}</div>
+                <div class="sub">共 ${session.message_count} 条提问 · 最近活跃 ${formatBeijingTime(session.last_activity)}${session.client_ip ? ` · IP ${escapeHtml(session.client_ip)}` : ""}</div>
               </div>
             </div>
           </div>`;
