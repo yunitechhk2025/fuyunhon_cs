@@ -645,16 +645,6 @@
         justify-content: flex-end;
       }
 
-      .compose-warn {
-        background: #fff7ea;
-        border: 1px dashed #ffb020;
-        border-radius: 10px;
-        padding: 8px 12px;
-        color: #8a6d1a;
-        font-size: 12px;
-        margin-bottom: 10px;
-      }
-
       .btn {
         border: 0;
         padding: 9px 18px;
@@ -1121,8 +1111,8 @@
         collab: { label: "人机协同模式", desc: "AI 生成建议答案，客服审核后再发送" },
       };
 
-      // 目前只有一个客服账号，"认领"这个多人协作概念对状态展示没有意义，
-      // 统一只区分"待处理"和"已回复"两种状态（claimed 在底层仍然存在，只是不再单独展示）。
+      // 已去掉"认领此问题"这套多客服协作机制，只保留"待处理"和"已回复"两种状态；
+      // claimed 仍保留在这个映射里，兼容历史数据里可能残留的旧状态值。
       const STATUS_LABEL = { pending: "待处理", claimed: "待处理", answered: "已回复" };
 
       let currentAgent = null;
@@ -1561,7 +1551,7 @@
       // ---------------- 会话列表（按用户 session_id 分组，一个用户一个对话框） ----------------
 
       function avatarClassFor(session) {
-        if (session.pending_count > 0 || session.claimed_count > 0) return "pending";
+        if (session.pending_count > 0) return "pending";
         return "answered";
       }
 
@@ -1574,7 +1564,7 @@
       }
 
       function sessionStatusBadge(session) {
-        const unresolved = (session.pending_count || 0) + (session.claimed_count || 0);
+        const unresolved = session.pending_count || 0;
         if (unresolved > 0) {
           return `<span class="badge pending">${unresolved} 条待处理</span>`;
         }
@@ -1583,8 +1573,8 @@
 
       function matchesFilter(session) {
         if (activeFilter === "all") return true;
-        if (activeFilter === "pending") return session.pending_count > 0 || session.claimed_count > 0;
-        if (activeFilter === "answered") return session.pending_count === 0 && session.claimed_count === 0;
+        if (activeFilter === "pending") return session.pending_count > 0;
+        if (activeFilter === "answered") return session.pending_count === 0;
         return true;
       }
 
@@ -1684,9 +1674,6 @@
             </div>
             ${renderIntentBlock(item, item.status === "answered" ? "现有题库/资料中暂无对应说明。" : "现有题库/资料中暂无对应说明，请客服根据实际情况人工回复，或补充资料后重新检索。")}`;
 
-        const isMine = item.claimed_by === currentAgent.id;
-        const isClaimedByOther = item.claimed_by && !isMine;
-
         if (item.status === "answered") {
           delete composeDrafts[item.id];
           const autoSent = !item.answered_by && item.answered_by_name;
@@ -1717,8 +1704,8 @@
           if (aiHandledInCollab) {
             delete composeDrafts[item.id];
           } else {
-            // 无论是否已认领，只要是需要人工处理的问题，都始终提供输入框，客服随时可以直接回复客户
-            html += composeAreaHtml(item, isMine, isClaimedByOther);
+            // 只要是需要人工处理的问题，都始终提供输入框，客服随时可以直接回复客户
+            html += composeAreaHtml(item);
           }
         }
 
@@ -1793,33 +1780,19 @@
         lastThreadSessionId = selectedSessionId;
       }
 
-      function composeAreaHtml(item, isMine, isClaimedByOther) {
-        // 不管当前是否已认领、认领人是谁，始终提供输入框：客服可以随时直接回复客户，
-        // "认领"只是一个可选的协作提示（让其他客服知道有人在处理），不是回复的前提条件。
+      function composeAreaHtml(item) {
+        // 始终只提供一个"发送回复"按钮：客服随时可以直接在这里输入内容并发送给客户，
+        // 不需要额外的认领/释放协作步骤。
         // 草稿箱里如果有客服正在输入但还没发送的内容，优先用草稿箱的内容，不用 AI 建议覆盖掉。
         const hasDraft = Object.prototype.hasOwnProperty.call(composeDrafts, item.id);
         const prefill = hasDraft ? composeDrafts[item.id] : item.ai_suggested_answer || "";
-        let warnHtml = "";
-        let actionsHtml = "";
-
-        if (isClaimedByOther) {
-          warnHtml = `<div class="compose-warn">⚠️ 客服「${escapeHtml(item.claimed_by_name || "")}」正在处理该问题，如需回复请先与其确认，避免重复答复客户。</div>`;
-          actionsHtml = `<button class="btn btn-primary" data-action="answer" data-id="${item.id}">发送回复</button>`;
-        } else if (item.status === "claimed" && isMine) {
-          actionsHtml = `
-            <button class="btn btn-secondary" data-action="release" data-id="${item.id}">释放认领</button>
-            <button class="btn btn-primary" data-action="answer" data-id="${item.id}">发送回复</button>`;
-        } else {
-          actionsHtml = `
-            <button class="btn btn-secondary" data-action="claim" data-id="${item.id}">认领此问题</button>
-            <button class="btn btn-primary" data-action="answer" data-id="${item.id}">发送回复</button>`;
-        }
 
         return `
           <div class="compose-area">
-            ${warnHtml}
             <textarea data-answer-input="${item.id}" placeholder="输入回复内容...">${escapeHtml(prefill)}</textarea>
-            <div class="compose-actions">${actionsHtml}</div>
+            <div class="compose-actions">
+              <button class="btn btn-primary" data-action="answer" data-id="${item.id}">发送回复</button>
+            </div>
           </div>`;
       }
 
@@ -1840,27 +1813,20 @@
 
         threadEl.querySelectorAll("[data-action]").forEach((btn) => {
           const id = btn.getAttribute("data-id");
-          const action = btn.getAttribute("data-action");
           btn.addEventListener("click", async () => {
             try {
-              if (action === "claim") {
-                await apiFetch(`/api/agent/claim/${id}`, { method: "POST" });
-              } else if (action === "release") {
-                await apiFetch(`/api/agent/release/${id}`, { method: "POST" });
-              } else if (action === "answer") {
-                const textarea = document.querySelector(`[data-answer-input="${id}"]`);
-                const answer = textarea.value.trim();
-                if (!answer) {
-                  showToast("请输入回复内容");
-                  return;
-                }
-                await apiFetch(`/api/agent/answer/${id}`, {
-                  method: "POST",
-                  body: JSON.stringify({ answer }),
-                });
-                delete composeDrafts[id];
-                showToast("回复已发送");
+              const textarea = document.querySelector(`[data-answer-input="${id}"]`);
+              const answer = textarea.value.trim();
+              if (!answer) {
+                showToast("请输入回复内容");
+                return;
               }
+              await apiFetch(`/api/agent/answer/${id}`, {
+                method: "POST",
+                body: JSON.stringify({ answer }),
+              });
+              delete composeDrafts[id];
+              showToast("回复已发送");
               await refreshAll();
             } catch (err) {
               showToast(err.message);

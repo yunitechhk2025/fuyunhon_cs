@@ -945,24 +945,6 @@ def agent_session_messages(session_id: str, agent: dict = Depends(get_current_ag
     return {"items": database.list_session_messages(session_id)}
 
 
-@app.post("/api/agent/claim/{conversation_id}")
-async def agent_claim(conversation_id: int, agent: dict = Depends(get_current_agent)) -> dict:
-    ok = database.claim_conversation(conversation_id, agent["id"], agent["display_name"])
-    if not ok:
-        raise HTTPException(status_code=409, detail="该问题已被其他客服认领或已完成")
-    await manager.broadcast({"type": "claimed", "id": conversation_id, "agent": agent["display_name"]})
-    return {"success": True}
-
-
-@app.post("/api/agent/release/{conversation_id}")
-async def agent_release(conversation_id: int, agent: dict = Depends(get_current_agent)) -> dict:
-    ok = database.release_conversation(conversation_id, agent["id"])
-    if not ok:
-        raise HTTPException(status_code=409, detail="无法释放：该问题不是由你认领")
-    await manager.broadcast({"type": "released", "id": conversation_id})
-    return {"success": True}
-
-
 @app.post("/api/agent/answer/{conversation_id}")
 async def agent_answer(
     conversation_id: int, req: AnswerRequest, agent: dict = Depends(get_current_agent)

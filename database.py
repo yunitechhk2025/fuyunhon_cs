@@ -268,44 +268,6 @@ def mark_answered(conversation_id: int, final_answer: str, answered_by: Optional
         )
 
 
-def claim_conversation(conversation_id: int, agent_id: int, agent_name: str) -> bool:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT status, claimed_by FROM conversations WHERE id = ?", (conversation_id,)
-        ).fetchone()
-        if row is None or row["status"] == "answered":
-            return False
-        if row["claimed_by"] and row["claimed_by"] != agent_id:
-            return False
-        conn.execute(
-            """
-            UPDATE conversations
-            SET status = 'claimed', claimed_by = ?, claimed_by_name = ?, updated_at = datetime('now')
-            WHERE id = ?
-            """,
-            (agent_id, agent_name, conversation_id),
-        )
-        return True
-
-
-def release_conversation(conversation_id: int, agent_id: int) -> bool:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT claimed_by FROM conversations WHERE id = ?", (conversation_id,)
-        ).fetchone()
-        if row is None or row["claimed_by"] != agent_id:
-            return False
-        conn.execute(
-            """
-            UPDATE conversations
-            SET status = 'pending', claimed_by = NULL, claimed_by_name = NULL, updated_at = datetime('now')
-            WHERE id = ?
-            """,
-            (conversation_id,),
-        )
-        return True
-
-
 def get_conversation(conversation_id: int) -> Optional[sqlite3.Row]:
     with get_conn() as conn:
         return conn.execute(
@@ -314,6 +276,8 @@ def get_conversation(conversation_id: int) -> Optional[sqlite3.Row]:
 
 
 def list_queue() -> list:
+    # 已去掉"认领"机制，新对话不会再产生 'claimed' 状态；这里仍然把它当未处理来查，
+    # 只是为了兼容旧版本遗留下来、还没处理完的历史数据，不会影响后续新对话。
     with get_conn() as conn:
         rows = conn.execute(
             """
@@ -348,8 +312,8 @@ def list_sessions(limit: int = 200) -> list:
             SELECT
                 session_id,
                 COUNT(*) AS message_count,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
-                SUM(CASE WHEN status = 'claimed' THEN 1 ELSE 0 END) AS claimed_count,
+                -- 'claimed' 是已去掉的旧状态值，这里并入 pending 一起统计，兼容历史遗留数据。
+                SUM(CASE WHEN status IN ('pending', 'claimed') THEN 1 ELSE 0 END) AS pending_count,
                 MAX(created_at) AS last_activity,
                 MIN(created_at) AS first_activity
             FROM conversations
