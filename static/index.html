@@ -785,11 +785,21 @@
             // elapsedMs 按提问时间算出这条对话已经等了多久，传给 pollAnswer 后它会用"剩余
             // 时间"而不是重新数满 10 秒——不然客户明明已经等过、该看到的"人工客服正忙"提示
             // 却要刷新一次就"倒退"回等待状态，再重新等 10 秒才会出现，看起来像是卡住了。
+            //
+            // is_explicit_transfer=true 说明这条对话是客户主动说"转人工"、自己补充过具体问题
+            // 后进入的等待状态（跟题库未命中被动转人工是两种不同的起点）：这时不能恢复出
+            // "已收到您的问题，正在为您转接人工客服"这句——那是被动转人工的话术，跟客户主动
+            // 补充问题时实际看到的"已将您的问题「XXX」更新给人工客服…"不一致，刷新后会像是
+            // "换了一个界面"。这里按是否已经留了邮箱，还原出跟当时提交后一模一样的确认文案。
             const bubble = addMessage("", "bot");
-            setThinkingText(
-              bubble,
-              item.matched ? "AI 正在思考您的问题，请稍候..." : "已收到您的问题，正在为您转接人工客服，请稍候"
-            );
+            const initialText = item.is_explicit_transfer
+              ? item.email
+                ? `已将您的问题「${item.question}」更新给人工客服，请耐心等待客服回复您～`
+                : `已将你的问题「${item.question}」更新给人工客服。`
+              : item.matched
+              ? "AI 正在思考您的问题，请稍候..."
+              : "已收到您的问题，正在为您转接人工客服，请稍候";
+            setThinkingText(bubble, initialText);
             pollAnswer(item.id, bubble, item.matched, item.mode_used, {
               question: item.question,
               emailProvided: item.has_email,

@@ -90,6 +90,12 @@ def init_db() -> None:
         # "请描述您的问题"这个输入框，还是显示"已收到您的问题…"这类等待提示——否则刷新后
         # 客户会永久失去补充问题的入口，只能看到一句不会再变化的等待语。
         _add_column_if_missing(conn, "conversations", "awaiting_transfer_details", "INTEGER DEFAULT 0")
+        # 跟 awaiting_transfer_details 不同：这个标记客户提交完问题后不会被清零，会一直保留，
+        # 用来记住"这条对话最初是客户主动说'转人工'触发的"，而不是题库未命中被动转过来的。
+        # 客户端刷新页面恢复历史记录时要据此选择正确的确认话术（"已将您的问题…更新给人工
+        # 客服"而不是"已收到您的问题，正在为您转接人工客服"），否则刷新后会显示成一句跟当时
+        # 实际发生的事情不符的话，看起来像是"变成另一个界面"。
+        _add_column_if_missing(conn, "conversations", "is_explicit_transfer", "INTEGER DEFAULT 0")
 
         row = conn.execute("SELECT value FROM settings WHERE key = 'global_mode'").fetchone()
         if row is None:
@@ -251,6 +257,16 @@ def set_awaiting_transfer_details(conversation_id: int, awaiting: bool) -> None:
         conn.execute(
             "UPDATE conversations SET awaiting_transfer_details = ? WHERE id = ?",
             (1 if awaiting else 0, conversation_id),
+        )
+
+
+def set_is_explicit_transfer(conversation_id: int, value: bool) -> None:
+    """标记这条对话最初是客户主动说"转人工"触发的，且这个标记不会随着补充问题而清零；
+    详见 init_db 里 is_explicit_transfer 列的说明。"""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE conversations SET is_explicit_transfer = ? WHERE id = ?",
+            (1 if value else 0, conversation_id),
         )
 
 

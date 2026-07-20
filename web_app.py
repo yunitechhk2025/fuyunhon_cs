@@ -753,6 +753,7 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
         # 标记一下：客户端刷新页面恢复历史记录时要据此重新展示"请描述您的问题"输入框，
         # 而不是误当成已经转人工成功、只需要安静等待的状态。
         database.set_awaiting_transfer_details(conversation_id, True)
+        database.set_is_explicit_transfer(conversation_id, True)
         conversation = database.get_conversation(conversation_id)
         await manager.broadcast({"type": "new_question", "conversation": dict(conversation)})
         return AskResponse(
@@ -844,6 +845,11 @@ def list_customer_session_history(session_id: str) -> dict:
                 "has_email": bool(item["customer_email"]),
                 "email": item["customer_email"] or None,
                 "awaiting_transfer_details": bool(item["awaiting_transfer_details"]),
+                # 客户端刷新恢复历史记录时用来选择正确的确认话术："已将您的问题…更新给
+                # 人工客服"（主动转人工场景）而不是"已收到您的问题，正在为您转接人工客服"
+                # （题库未命中被动转人工场景）——这个标记不会随补充问题而清零，永久记住
+                # 这条对话最初是怎么进入转人工状态的。
+                "is_explicit_transfer": bool(item["is_explicit_transfer"]),
                 # 提问时间（UTC，不带时区后缀，前端按 UTC 解析）：客户端刷新恢复历史记录时，
                 # 用它算出这条对话已经等了多久，避免每次刷新都从 0 重新数 10 秒——不然客户
                 # 明明已经等过、已经看到过"人工客服正忙"提示，刷新一次就"倒退"回"AI 思考中"，
