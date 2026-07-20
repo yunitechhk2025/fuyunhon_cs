@@ -190,6 +190,11 @@
         border-color: #2f6fed;
       }
 
+      /* 全人工模式下没有邮箱输入框，提交按钮直接跟在问题输入框下面，需要单独留一点上边距。 */
+      .transfer-question-submit {
+        margin-top: 10px;
+      }
+
       .composer {
         display: flex;
         gap: 12px;
@@ -528,7 +533,9 @@
       // 客户直接说"转人工"之类明确要求转接真人："转人工"这几个字本身不是一句有实际内容的
       // 提问，客服光看这个不知道要处理什么，所以要请客户再描述一次具体想咨询的问题（必填）；
       // 邮箱选填，留下真实格式的邮箱后客服可以直接通过邮件回复，不填也不影响问题内容的更新。
-      function renderTransferQuestionPrompt(el, conversationId) {
+      // 全人工模式下客服本就要一直盯着工作台处理每条对话，完全不需要留邮箱这套机制，
+      // 所以 isManual=true 时只显示问题输入框，不渲染邮箱相关的这一整套 UI。
+      function renderTransferQuestionPrompt(el, conversationId, isManual) {
         el.innerHTML = "";
 
         const textEl = document.createElement("div");
@@ -540,20 +547,26 @@
         questionInput.placeholder = "请输入您想咨询的问题";
         el.appendChild(questionInput);
 
-        const row = document.createElement("div");
-        row.className = "email-capture";
-
-        const emailInput = document.createElement("input");
-        emailInput.type = "email";
-        emailInput.placeholder = "您的邮箱（选填，方便客服邮件回复您）";
-
         const submitBtn = document.createElement("button");
         submitBtn.type = "button";
         submitBtn.textContent = "提交";
 
-        row.appendChild(emailInput);
-        row.appendChild(submitBtn);
-        el.appendChild(row);
+        let emailInput = null;
+        if (isManual) {
+          submitBtn.className = "transfer-question-submit";
+          el.appendChild(submitBtn);
+        } else {
+          const row = document.createElement("div");
+          row.className = "email-capture";
+
+          emailInput = document.createElement("input");
+          emailInput.type = "email";
+          emailInput.placeholder = "您的邮箱（选填，方便客服邮件回复您）";
+
+          row.appendChild(emailInput);
+          row.appendChild(submitBtn);
+          el.appendChild(row);
+        }
 
         const statusEl = document.createElement("div");
         statusEl.className = "email-capture-status";
@@ -572,7 +585,7 @@
             showStatus("请输入您想咨询的问题");
             return;
           }
-          const email = emailInput.value.trim();
+          const email = emailInput ? emailInput.value.trim() : "";
           if (email && !EMAIL_RE.test(email)) {
             showStatus("邮箱格式不正确，请检查后重试，或留空不填");
             return;
@@ -586,7 +599,11 @@
             });
             if (!res.ok) throw new Error();
             questionInput.remove();
-            row.remove();
+            if (emailInput) {
+              emailInput.parentElement.remove();
+            } else {
+              submitBtn.remove();
+            }
             showStatus("已将您的问题更新给人工客服，请耐心等待客服回复～");
           } catch (err) {
             submitBtn.disabled = false;
@@ -678,15 +695,22 @@
       // 涉及转人工的情况（matched=false）在 10 秒时已经直接进入"留邮箱/补充问题"的转人工机制，
       // 客户随时可以在那个入口留下联系方式，不需要再额外设一个"等 10 分钟后放弃"的兜底文案；
       // 这里持续轮询直到客服/AI 给出最终回复为止，客户不需要手动刷新页面。
-      async function pollAnswer(conversationId, loadingEl, matched, skipBusyTimer) {
+      async function pollAnswer(conversationId, loadingEl, matched, skipBusyTimer, mode) {
         let answered = false;
+        // 未命中题库、真正转人工时，"人工客服正忙"提示会作为新的一条消息追加在下面，
+        // 不会覆盖掉前面"已收到您的问题，正在为您转接人工客服，请稍候"这条消息——
+        // 两条都要保留在对话记录里，followUpEl 记录新增的那一条，方便最终答案写入。
+        let followUpEl = null;
 
         // matched=true 说明题库已命中、AI 正在准备自动发送，这个等待过程从头到尾都跟"人工客服"无关，
         // 全程只应该出现"AI"相关的话术，绝不能出现"转人工/人工客服正忙"这类文案，避免误导客户。
         // 只有 matched=false（题库未命中，真正转人工）时，才会在等太久后提示客户就地留下邮箱。
         // skipBusyTimer=true：客户已经明确要求转人工、留邮箱入口已经立即展示过了，不需要再等 10 秒
         // 后重复渲染一次（避免打断客户正在填写的邮箱输入框）。
-        const busyTimer = skipBusyTimer
+        // 全人工模式完全不需要"留邮箱"这套机制——问题已经直接进了工作台待处理队列，客服本就
+        // 要一直盯着处理，所以全人工模式下即使等了 10 秒也不弹任何提示，安静持续轮询即可。
+        const isManual = mode === "manual";
+        const busyTimer = skipBusyTimer || isManual
           ? null
           : matched
           ? setTimeout(() => {
@@ -696,7 +720,8 @@
             }, 10000)
           : setTimeout(() => {
               if (!answered) {
-                renderLeaveEmailPrompt(loadingEl, conversationId);
+                followUpEl = addMessage("", "bot");
+                renderLeaveEmailPrompt(followUpEl, conversationId);
               }
             }, 10000);
 
@@ -708,7 +733,7 @@
             if (data.status === "answered" && data.answer) {
               answered = true;
               clearTimeout(busyTimer);
-              setFinalText(loadingEl, data.answer);
+              setFinalText(followUpEl || loadingEl, data.answer);
               return;
             }
           } catch (err) {
@@ -738,10 +763,10 @@
             setFinalText(loading, data.answer);
           } else if (data.need_transfer_details) {
             // 客户直接说了"转人工"之类，明确要求转接真人：不用再演"AI 思考/等待"这段过程，
-            // 直接请客户补充具体问题 + 选填邮箱，同时仍在后台继续轮询，方便客服在工作台
-            // 实时回复时也能收到。
-            renderTransferQuestionPrompt(loading, data.conversation_id);
-            await pollAnswer(data.conversation_id, loading, false, true);
+            // 直接请客户补充具体问题（全人工模式下不需要再选填邮箱），同时仍在后台继续轮询，
+            // 方便客服在工作台实时回复时也能收到。
+            renderTransferQuestionPrompt(loading, data.conversation_id, data.mode === "manual");
+            await pollAnswer(data.conversation_id, loading, false, true, data.mode);
           } else {
             // 人机协同模式下，若题库已命中（AI 已生成建议、进入自动发送倒计时），
             // 客户看到的应该是"AI 思考中"，不是"转人工"提示——只有未命中时才是真正转人工。
@@ -749,7 +774,7 @@
               loading,
               data.matched ? "AI 正在思考您的问题，请稍候..." : "已收到您的问题，正在为您转接人工客服，请稍候"
             );
-            await pollAnswer(data.conversation_id, loading, data.matched);
+            await pollAnswer(data.conversation_id, loading, data.matched, false, data.mode);
           }
         } catch (err) {
           setFinalText(loading, `出错了：${err.message}`);

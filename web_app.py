@@ -429,25 +429,6 @@ def _smtp_overrides() -> dict:
     }
 
 
-async def _notify_agent_unresolved(conversation_id: int, product: str, question: str, mode: str, reason: str) -> None:
-    """客户的问题需要人工处理时（题库未命中，或全人工模式下的任意问题），邮件提醒客服/管理员。
-    邮件发送是阻塞的网络调用，用线程池执行，避免拖慢客户端提问接口的响应。"""
-    product_label = PRODUCTS.get(product, {}).get("label", product or "未知产品")
-    mode_label = MODE_LABELS.get(mode, mode)
-    subject = f"【{BRAND_NAME} 客服提醒】有客户问题待人工处理（对话 #{conversation_id}）"
-    body = (
-        f"产品：{product_label}\n"
-        f"工作模式：{mode_label}\n"
-        f"转人工原因：{reason}\n"
-        f"客户提问：{question}\n"
-        f"对话编号：#{conversation_id}\n"
-    )
-    try:
-        await asyncio.to_thread(send_email, subject, body, _notify_recipient(), **_smtp_overrides())
-    except Exception as exc:  # noqa: BLE001
-        print(f"[warn] 转人工提醒邮件发送失败: {exc}", file=sys.stderr)
-
-
 async def _notify_customer_email_left(
     conversation_id: int, product: str, question: str, mode: str, customer_email: str
 ) -> None:
@@ -771,9 +752,8 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
 
     # 未命中题库（包括该产品尚未建立题库的情况）时，任何模式都不允许 AI 直接回复或编造答案，
     # 统一转人工处理；只有确认命中题库时，才允许由 AI 直接回复（全AI模式）或生成建议（协同模式）。
-    # notify_reason 非空则说明本次提问需要邮件提醒客服：全AI/协同模式仅在题库未命中时提醒，
-    # 全人工模式因为从不由 AI 直接作答，每一条新问题都需要提醒。
-    notify_reason: Optional[str] = None
+    # 转人工不会立刻发邮件提醒客服：只有客户在"人工客服正忙"提示下主动留下邮箱后才会发邮件，
+    # 避免客户还没留联系方式时就打扰客服；客服仍能在工作台的待处理队列里实时看到这条对话。
     # pending_matched 仅人机协同模式下可能为 True：题库已命中、AI 已生成建议并安排好自动发送倒计时，
     # 客户此时应看到"AI 思考中"而不是"转人工"提示；其余情况（未命中/全人工）都应显示转人工提示。
     pending_matched = False
@@ -795,7 +775,6 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
         database.set_retrieval_info(
             conversation_id, False, None, None, result.score if result is not None else 0.0
         )
-        notify_reason = "题库未命中"
 
     elif mode == "collab":
         try:
@@ -812,23 +791,17 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
                 database.set_auto_send_at(conversation_id, auto_send_at)
                 asyncio.create_task(_auto_send_after_timeout(conversation_id, result.text, timeout))
                 pending_matched = True
-            else:
-                # 未命中：不生成 AI 建议、不安排自动发送，完全交给客服人工处理
-                notify_reason = "题库未命中"
+            # 未命中：不生成 AI 建议、不安排自动发送，完全交给客服人工处理
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] 协同模式生成AI建议失败: {exc}", file=sys.stderr)
             database.set_retrieval_info(conversation_id, False, None, None, 0.0)
-            notify_reason = "题库未命中"
     elif mode == "manual":
         _log_retrieval_only(conversation_id, product, question)
-        notify_reason = "全人工模式"
 
-    # 走到这里说明本次提问需要人工处理（全人工模式 / 协同或全AI模式下未命中题库）
+    # 走到这里说明本次提问需要人工处理（全人工模式 / 协同或全AI模式下未命中题库）；
+    # 只广播给工作台实时展示，不发邮件——邮件仅在客户主动留下邮箱后才发送。
     conversation = database.get_conversation(conversation_id)
     await manager.broadcast({"type": "new_question", "conversation": dict(conversation)})
-
-    if notify_reason:
-        asyncio.create_task(_notify_agent_unresolved(conversation_id, product, question, mode, notify_reason))
 
     return AskResponse(
         conversation_id=conversation_id, status="pending", answer=None, mode=mode, matched=pending_matched
@@ -863,15 +836,18 @@ async def leave_customer_email(conversation_id: int, req: LeaveEmailRequest) -> 
     if not saved:
         raise HTTPException(status_code=404, detail="对话不存在")
 
-    asyncio.create_task(
-        _notify_customer_email_left(
-            conversation_id,
-            conversation["product"],
-            conversation["question"],
-            conversation["mode_used"],
-            email,
+    # 全人工模式下客服本就要盯着工作台处理每一条对话，不需要额外邮件提醒；
+    # 客户留下的邮箱依然会保存、在工作台可见，只是不再触发邮件。
+    if conversation["mode_used"] != "manual":
+        asyncio.create_task(
+            _notify_customer_email_left(
+                conversation_id,
+                conversation["product"],
+                conversation["question"],
+                conversation["mode_used"],
+                email,
+            )
         )
-    )
     return {"success": True}
 
 
@@ -902,7 +878,8 @@ async def submit_transfer_question(conversation_id: int, req: TransferQuestionRe
     conversation = database.get_conversation(conversation_id)
     await manager.broadcast({"type": "conversation_updated", "conversation": dict(conversation)})
 
-    if email:
+    # 全人工模式不需要邮件提醒（同上，客服已在工作台盯着处理）。
+    if email and conversation["mode_used"] != "manual":
         asyncio.create_task(
             _notify_customer_email_left(
                 conversation_id, conversation["product"], question, conversation["mode_used"], email

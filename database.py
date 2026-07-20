@@ -394,8 +394,8 @@ def list_sessions(limit: int = 200) -> list:
 def get_daily_stats(start_utc: str, end_utc: str) -> dict:
     """统计 [start_utc, end_utc) 时间范围内（UTC，'YYYY-MM-DD HH:MM:SS' 格式，与 created_at 一致）的：
     咨询用户数（按 session_id 去重）、总对话条数、转人工请求次数。
-    转人工请求的判定口径与 web_app._notify_agent_unresolved 的触发条件保持一致：
-    全人工模式下的任意问题，或全AI/协同模式下题库未命中（matched 为假或未记录）。"""
+    转人工请求的判定口径：全人工模式下的任意问题，或全AI/协同模式下题库未命中
+    （matched 为假或未记录）——与是否实际发出邮件提醒无关（邮件仅在客户主动留邮箱后才发）。"""
     with get_conn() as conn:
         row = conn.execute(
             """
