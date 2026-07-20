@@ -700,6 +700,8 @@
         // 未命中题库、真正转人工时，"人工客服正忙"提示会作为新的一条消息追加在下面，
         // 不会覆盖掉前面"已收到您的问题，正在为您转接人工客服，请稍候"这条消息——
         // 两条都要保留在对话记录里，followUpEl 记录新增的那一条，方便最终答案写入。
+        // 全人工模式没有这个提示（见下方 isManual 分支），但客服的最终回复同样要另起一条
+        // 新消息，不能覆盖掉"已收到您的问题"这条——到真正拿到回复时才现场创建这条新消息。
         let followUpEl = null;
 
         // matched=true 说明题库已命中、AI 正在准备自动发送，这个等待过程从头到尾都跟"人工客服"无关，
@@ -733,7 +735,11 @@
             if (data.status === "answered" && data.answer) {
               answered = true;
               clearTimeout(busyTimer);
-              setFinalText(followUpEl || loadingEl, data.answer);
+              // 全人工模式没有 followUpEl（没有留邮箱这套弹窗），但同样不能把客服的回复
+              // 直接写进"已收到您的问题，正在为您转接人工客服，请稍候"这条消息里——那句话
+              // 也要保留成一条独立的记录，客服的回复另起一条新消息展示。
+              const targetEl = followUpEl || (isManual ? addMessage("", "bot") : loadingEl);
+              setFinalText(targetEl, data.answer);
               return;
             }
           } catch (err) {
