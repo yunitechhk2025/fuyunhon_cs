@@ -1032,6 +1032,19 @@
           </div>
         </div>
 
+        <div id="admin-irrelevant-section" style="display: none;">
+          <h4>无关闲聊自动过滤（AI 判断）</h4>
+          <p style="font-size: 12px; color: #94a1b8; margin: 0 0 10px; line-height: 1.6;">
+            开启后，AI 会先判断客户消息是否与产品咨询完全无关（纯闲聊寒暄，或荒谬/挑衅性提问，如
+            "吃饭了吗""这产品对国家安全有危害吗"）；只有非常确信无关时才会直接回复引导语，不转
+            人工、不发邮件、不进队列，模糊情况仍按正常问题处理。如遇误判，可随时关闭，退回"全部
+            按正常问题处理"。
+          </p>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <button class="btn" id="irrelevant-toggle-btn">加载中...</button>
+          </div>
+        </div>
+
         <div id="admin-agents-section" style="display: none;">
           <h4>客服账号管理（管理员）</h4>
           <ul class="agents-list" id="agents-list"></ul>
@@ -1094,6 +1107,8 @@
       const dailyReportToggleBtn = document.getElementById("daily-report-toggle-btn");
       const dailyReportTimeInput = document.getElementById("daily-report-time-input");
       const saveDailyReportBtn = document.getElementById("save-daily-report-btn");
+      const adminIrrelevantSection = document.getElementById("admin-irrelevant-section");
+      const irrelevantToggleBtn = document.getElementById("irrelevant-toggle-btn");
       const adminAgentsSection = document.getElementById("admin-agents-section");
       const agentsList = document.getElementById("agents-list");
       const toastEl = document.getElementById("toast");
@@ -1224,6 +1239,7 @@
         adminTimeoutSection.style.display = agent.role === "admin" ? "block" : "none";
         adminReminderSection.style.display = agent.role === "admin" ? "block" : "none";
         adminDailyReportSection.style.display = agent.role === "admin" ? "block" : "none";
+        adminIrrelevantSection.style.display = agent.role === "admin" ? "block" : "none";
         adminNotifyEmailSection.style.display = agent.role === "admin" ? "block" : "none";
         adminSmtpSection.style.display = agent.role === "admin" ? "block" : "none";
         refreshMode();
@@ -1234,6 +1250,7 @@
           refreshCollabTimeout();
           refreshReminderSettings();
           refreshDailyReportSettings();
+          refreshIrrelevantFilterSettings();
           refreshNotifyEmail();
           refreshSmtpSettings();
         }
@@ -1499,6 +1516,41 @@
 
       dailyReportToggleBtn.addEventListener("click", () => saveDailyReportSettings(!dailyReportEnabled));
       saveDailyReportBtn.addEventListener("click", () => saveDailyReportSettings(dailyReportEnabled));
+
+      // ---------------- 无关闲聊自动过滤（AI 判断） ----------------
+
+      let irrelevantFilterEnabled = false;
+
+      function renderIrrelevantToggle() {
+        irrelevantToggleBtn.textContent = irrelevantFilterEnabled ? "✅ 已开启，点击关闭" : "⭕ 已关闭，点击开启";
+        irrelevantToggleBtn.className = irrelevantFilterEnabled ? "btn btn-primary" : "btn btn-secondary";
+      }
+
+      async function refreshIrrelevantFilterSettings() {
+        try {
+          const data = await apiFetch("/api/irrelevant-filter-settings");
+          irrelevantFilterEnabled = !!data.enabled;
+          renderIrrelevantToggle();
+        } catch (err) {
+          irrelevantToggleBtn.textContent = "加载失败";
+        }
+      }
+
+      async function saveIrrelevantFilterSettings(nextEnabled) {
+        try {
+          await apiFetch("/api/irrelevant-filter-settings", {
+            method: "POST",
+            body: JSON.stringify({ enabled: nextEnabled }),
+          });
+          irrelevantFilterEnabled = nextEnabled;
+          renderIrrelevantToggle();
+          showToast(nextEnabled ? "已开启无关闲聊过滤" : "已关闭，将按正常问题处理所有消息");
+        } catch (err) {
+          showToast(err.message);
+        }
+      }
+
+      irrelevantToggleBtn.addEventListener("click", () => saveIrrelevantFilterSettings(!irrelevantFilterEnabled));
 
       // ---------------- 会话列表（按用户 session_id 分组，一个用户一个对话框） ----------------
 

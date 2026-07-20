@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import re
 import sys
@@ -100,6 +101,10 @@ class NotifyEmailRequest(BaseModel):
 
 class LeaveEmailRequest(BaseModel):
     email: str
+
+
+class IrrelevantFilterSettingsRequest(BaseModel):
+    enabled: bool
 
 
 class SmtpSettingsRequest(BaseModel):
@@ -222,6 +227,20 @@ def _normalize_product(product: Optional[str]) -> str:
     return product if product in PRODUCTS else DEFAULT_PRODUCT
 
 
+@app.get("/api/irrelevant-filter-settings")
+def get_irrelevant_filter_settings() -> dict:
+    enabled = database.get_setting("skip_irrelevant_enabled", "true") == "true"
+    return {"enabled": enabled}
+
+
+@app.post("/api/irrelevant-filter-settings")
+def set_irrelevant_filter_settings(
+    req: IrrelevantFilterSettingsRequest, agent: dict = Depends(require_admin)
+) -> dict:
+    database.set_setting("skip_irrelevant_enabled", "true" if req.enabled else "false")
+    return {"enabled": req.enabled}
+
+
 # 客户提问前的单纯寒暄/打招呼（"你好""在吗"之类），不是真正的咨询问题，不应该被判定为
 # "题库未命中"而转人工/发提醒邮件——直接由 AI 打个招呼、引导客户说出具体问题即可。
 # 仅匹配"整条消息都是寒暄用语"的情况；只要寒暄后面还带了具体问题（比如"你好，能天天用吗"），
@@ -244,6 +263,61 @@ def _greeting_reply(product: str) -> str:
     if label:
         return f"您好，我是澳洲肤润康「{label}」的 AI 客服，请问有什么想了解的呢？您可以直接告诉我想咨询的问题，我马上为您查询～"
     return "您好，我是澳洲肤润康 AI 客服，请问有什么想了解的呢？您可以直接告诉我想咨询的问题，我马上为您查询～"
+
+
+# 与产品咨询完全无关的闲聊/荒谬提问（"吃饭了吗""这产品对国家安全有危害吗"之类），不应该像
+# 正常问题一样转人工——但这类说法千变万化，没法像打招呼一样靠关键词穷举，需要 AI 做语义判断。
+# 出于风险控制，只有 AI 非常确信"完全无关"时才会判定为 True；任何模糊情况或调用异常都返回
+# False，退回到原有的检索/转人工流程，避免真实的客户问题被误判成"无关"而悄悄漏单。
+# 管理员可在工作台通过 skip_irrelevant_enabled 设置随时关闭这个判断，一键退回"全部按正常问题处理"。
+def _classify_irrelevant(question: str, product: str, model: Optional[str]) -> bool:
+    try:
+        from openai import OpenAI
+    except ImportError:
+        return False
+
+    product_label = PRODUCTS.get(product, {}).get("label", "该产品")
+    system_prompt = (
+        f"你是电商客服的预处理模块，只做一件事：判断客户这句话是否与「{product_label}」的产品咨询完全无关。\n"
+        "包括两类：\n"
+        "1. 纯粹的日常闲聊/寒暄，不构成真正的问题，例如：吃饭了吗、天气怎么样、讲个笑话、你多大了。\n"
+        "2. 与产品/护肤/使用场景毫无关系的荒谬、挑衅性、无意义提问，例如：这个产品对国家安全有危害吗、你支持谁当总统。\n"
+        "只有在你非常确信客户这句话跟产品咨询完全没有关系时，才判定为无关；只要哪怕有一点点可能是在问"
+        "产品本身、成分、功效、使用方法、适用人群、购买、售后等内容，就必须判定为相关，不确定的一律判定"
+        "为相关——宁可放过，不可错判。\n"
+        '只输出如下 JSON，不要输出任何其他文字：{"irrelevant": true 或 false}'
+    )
+    try:
+        client = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY", "EMPTY"),
+            base_url=os.getenv("OPENAI_BASE_URL"),
+            timeout=15.0,
+            max_retries=1,
+        )
+        resp = client.chat.completions.create(
+            model=_ai_model(model),
+            temperature=0,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": question},
+            ],
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            return False
+        payload = json.loads(match.group())
+        return bool(payload.get("irrelevant", False))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] 无关提问识别调用失败，按正常问题处理: {exc}", file=sys.stderr)
+        return False
+
+
+def _irrelevant_reply(product: str) -> str:
+    label = PRODUCTS.get(product, {}).get("label", "")
+    if label:
+        return f"这个问题好像和「{label}」的产品咨询没有太大关系呢，如果您有产品使用、成分、购买等相关问题，欢迎随时告诉我，我马上为您查询～"
+    return "这个问题好像和产品咨询没有太大关系呢，如果您有产品使用、成分、购买等相关问题，欢迎随时告诉我，我马上为您查询～"
 
 
 def _ai_model(model: Optional[str]) -> str:
@@ -614,11 +688,21 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
     session_id = req.session_id or str(uuid.uuid4())
     product = _normalize_product(req.product)
     mode = database.get_setting("global_mode", "auto")
+    is_greeting = _is_pure_greeting(question)
+
+    # 与产品咨询完全无关的闲聊/荒谬提问（"吃饭了吗""这产品对国家安全有危害吗"之类）：整个环节
+    # 都不落库、不进人工队列、不发邮件提醒，只在客户端展示一句引导语；管理员可在工作台随时关闭
+    # 这个判断（一键退回"全部按正常问题处理"）。打招呼已经由下面更便宜的关键词判断处理，这里
+    # 跳过，避免重复消耗一次 AI 调用。
+    if not is_greeting and database.get_setting("skip_irrelevant_enabled", "true") == "true":
+        if _classify_irrelevant(question, product, req.model):
+            return AskResponse(conversation_id=0, status="answered", answer=_irrelevant_reply(product), mode=mode)
+
     conversation_id = database.create_conversation(session_id, question, mode, _client_ip(request), product)
 
     # 单纯打招呼（"你好""在吗"等，不带具体问题）：任何模式下都直接由 AI 回一句问候语并结束，
     # 不算"题库未命中"，不转人工、不发邮件提醒——避免客户每次只是打个招呼就惊动客服。
-    if _is_pure_greeting(question):
+    if is_greeting:
         greeting_text = _greeting_reply(product)
         database.set_retrieval_info(conversation_id, True, "问候语", greeting_text, 1.0)
         database.mark_answered(conversation_id, greeting_text)
