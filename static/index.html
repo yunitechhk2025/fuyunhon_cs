@@ -477,9 +477,11 @@
           messages.scrollTop = messages.scrollHeight;
         }
 
+        const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
         submitBtn.addEventListener("click", async () => {
           const email = emailInput.value.trim();
-          if (!email || !email.includes("@")) {
+          if (!EMAIL_RE.test(email)) {
             showStatus("请输入正确的邮箱地址");
             return;
           }
@@ -492,7 +494,7 @@
             });
             if (!res.ok) throw new Error();
             row.remove();
-            showStatus("已收到您的邮箱，客服会尽快通过邮件回复您～");
+            showStatus("已将您的问题更新给人工客服，请耐心等待客服通过邮件回复您～");
           } catch (err) {
             submitBtn.disabled = false;
             showStatus("提交失败，请稍后重试");
@@ -579,14 +581,18 @@
         return data;
       }
 
-      async function pollAnswer(conversationId, loadingEl, matched) {
+      async function pollAnswer(conversationId, loadingEl, matched, skipBusyTimer) {
         const maxAttempts = 200; // 约 10 分钟（每 3 秒一次）
         let answered = false;
 
         // matched=true 说明题库已命中、AI 正在准备自动发送，这个等待过程从头到尾都跟"人工客服"无关，
         // 全程只应该出现"AI"相关的话术，绝不能出现"转人工/人工客服正忙"这类文案，避免误导客户。
         // 只有 matched=false（题库未命中，真正转人工）时，才会在等太久后提示客户就地留下邮箱。
-        const busyTimer = matched
+        // skipBusyTimer=true：客户已经明确要求转人工、留邮箱入口已经立即展示过了，不需要再等 10 秒
+        // 后重复渲染一次（避免打断客户正在填写的邮箱输入框）。
+        const busyTimer = skipBusyTimer
+          ? null
+          : matched
           ? setTimeout(() => {
               if (!answered) {
                 setFinalText(loadingEl, "AI 思考时间较长，请耐心等待");
@@ -642,6 +648,11 @@
           const data = await ask(text);
           if (data.status === "answered") {
             setFinalText(loading, data.answer);
+          } else if (data.need_email) {
+            // 客户直接说了"转人工"之类，明确要求转接真人：不用再演"AI 思考/等待"这段过程，
+            // 直接展示留邮箱入口，同时仍在后台继续轮询，方便客服在工作台实时回复时也能收到。
+            renderLeaveEmailPrompt(loading, data.conversation_id);
+            await pollAnswer(data.conversation_id, loading, false, true);
           } else {
             // 人机协同模式下，若题库已命中（AI 已生成建议、进入自动发送倒计时），
             // 客户看到的应该是"AI 思考中"，不是"转人工"提示——只有未命中时才是真正转人工。

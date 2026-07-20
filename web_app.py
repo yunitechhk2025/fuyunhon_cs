@@ -65,6 +65,9 @@ class AskResponse(BaseModel):
     # 仅在 status='pending' 且为人机协同模式时可能为 True：
     # 表示题库已命中、AI 已生成建议并已安排自动发送倒计时，客户此时应看到"AI 思考中"而不是"转人工"提示。
     matched: bool = False
+    # 仅在 status='pending' 时可能为 True：客户直接说了"转人工"之类明确要求转接真人，
+    # 客户端应立即展示"留邮箱"入口，不必再经历"AI 思考/等待 10 秒"这段过程。
+    need_email: bool = False
 
 
 class LoginRequest(BaseModel):
@@ -256,6 +259,30 @@ _GREETING_ONLY_PATTERN = re.compile(
 
 def _is_pure_greeting(text: str) -> bool:
     return bool(_GREETING_ONLY_PATTERN.match(text.strip()))
+
+
+# 客户直接说"转人工""人工客服"之类，是明确要求转接真人、不是一句需要检索/AI 回答的正常问题——
+# 不应该走题库检索，更不应该被"无关闲聊"AI 判断误判掉（比如被当成与产品无关而回一句引导语）。
+# 命中后直接进入"转人工需要留邮箱"流程：不立即发邮件提醒客服，只有客户真的填了有效邮箱才通知，
+# 与题库未命中等太久后的留邮箱入口共用同一条规则（不留邮箱就不会触发任何邮件）。
+_EXPLICIT_TRANSFER_PATTERN = re.compile(
+    r"(转人工|转接人工|转真人|人工客服|真人客服|找人工|找客服|人工坐席|接入人工|人工服务|人工帮我|"
+    r"human agent|talk to (a )?human|real person)",
+    re.IGNORECASE,
+)
+
+
+def _is_explicit_transfer_request(text: str) -> bool:
+    return bool(_EXPLICIT_TRANSFER_PATTERN.search(text.strip()))
+
+
+# 判断客户填写的邮箱是否是"看起来真的邮箱"（而不是随便打几个字符），只有格式合法才会真正
+# 发邮件通知客服；宁可拒绝一个格式有问题的邮箱，也不要发一封没法送达/客服没法回复的邮件。
+_EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _is_valid_email(text: str) -> bool:
+    return bool(_EMAIL_PATTERN.match(text.strip()))
 
 
 def _greeting_reply(product: str) -> str:
@@ -693,12 +720,15 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
     product = _normalize_product(req.product)
     mode = database.get_setting("global_mode", "auto")
     is_greeting = _is_pure_greeting(question)
+    # 客户直接说"转人工""人工客服"之类，是明确的转接要求，不是需要检索/AI 判断的正常问题——
+    # 要在"无关闲聊"判断之前拦截，否则可能被误判成"与产品无关"而回一句引导语（真实发生过的 bug）。
+    is_explicit_transfer = not is_greeting and _is_explicit_transfer_request(question)
 
     # 与产品咨询完全无关的闲聊/荒谬提问（"吃饭了吗""这产品对国家安全有危害吗"之类）：整个环节
     # 都不落库、不进人工队列、不发邮件提醒，只在客户端展示一句引导语；管理员可在工作台随时关闭
-    # 这个判断（一键退回"全部按正常问题处理"）。打招呼已经由下面更便宜的关键词判断处理，这里
-    # 跳过，避免重复消耗一次 AI 调用。
-    if not is_greeting and database.get_setting("skip_irrelevant_enabled", "true") == "true":
+    # 这个判断（一键退回"全部按正常问题处理"）。打招呼、明确要求转人工的都已在上面单独处理，
+    # 这里跳过，避免重复消耗一次 AI 调用、也避免被误判。
+    if not is_greeting and not is_explicit_transfer and database.get_setting("skip_irrelevant_enabled", "true") == "true":
         if _classify_irrelevant(question, product, req.model):
             return AskResponse(conversation_id=0, status="answered", answer=_irrelevant_reply(product), mode=mode)
 
@@ -711,6 +741,18 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
         database.set_retrieval_info(conversation_id, True, "问候语", greeting_text, 1.0)
         database.mark_answered(conversation_id, greeting_text)
         return AskResponse(conversation_id=conversation_id, status="answered", answer=greeting_text, mode=mode)
+
+    # 客户明确要求转人工：跳过题库检索/AI 生成，直接进入"转人工"状态，客户端立即展示留邮箱入口。
+    # 转人工的必要条件是客户填写（真实格式的）邮箱——这里不会立即发邮件提醒客服，只有客户在留
+    # 邮箱入口提交了合法邮箱后，才会真正发邮件通知（见 /leave-email 接口），避免每次客户单纯说一句
+    # "转人工"就触发一封没有联系方式、客服也没法回复的邮件；客服在工作台仍能实时看到这条待处理对话。
+    if is_explicit_transfer:
+        database.set_retrieval_info(conversation_id, False, None, None, 0.0)
+        conversation = database.get_conversation(conversation_id)
+        await manager.broadcast({"type": "new_question", "conversation": dict(conversation)})
+        return AskResponse(
+            conversation_id=conversation_id, status="pending", answer=None, mode=mode, matched=False, need_email=True
+        )
 
     # 未命中题库（包括该产品尚未建立题库的情况）时，任何模式都不允许 AI 直接回复或编造答案，
     # 统一转人工处理；只有确认命中题库时，才允许由 AI 直接回复（全AI模式）或生成建议（协同模式）。
@@ -795,7 +837,7 @@ async def leave_customer_email(conversation_id: int, req: LeaveEmailRequest) -> 
     """客户在"人工客服正忙"提示下主动留下邮箱：仅在客户填写并提交时才会调用此接口，
     客户不填邮箱则完全不会触发这条邮件通知，与其他转人工场景各自独立。"""
     email = req.email.strip()
-    if not email or "@" not in email:
+    if not _is_valid_email(email):
         raise HTTPException(status_code=400, detail="请输入有效的邮箱地址")
 
     conversation = database.get_conversation(conversation_id)
