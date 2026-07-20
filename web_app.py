@@ -749,6 +749,10 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
     # "转人工"就触发一封没有联系方式、客服也没法回复的邮件；客服在工作台仍能实时看到这条待处理对话。
     if is_explicit_transfer:
         database.set_retrieval_info(conversation_id, False, None, None, 0.0)
+        # 客户此时还没补充说明具体想咨询的问题（question 字段还是"转人工"这句占位文本），
+        # 标记一下：客户端刷新页面恢复历史记录时要据此重新展示"请描述您的问题"输入框，
+        # 而不是误当成已经转人工成功、只需要安静等待的状态。
+        database.set_awaiting_transfer_details(conversation_id, True)
         conversation = database.get_conversation(conversation_id)
         await manager.broadcast({"type": "new_question", "conversation": dict(conversation)})
         return AskResponse(
@@ -839,6 +843,7 @@ def list_customer_session_history(session_id: str) -> dict:
                 "matched": bool(item["matched"]),
                 "has_email": bool(item["customer_email"]),
                 "email": item["customer_email"] or None,
+                "awaiting_transfer_details": bool(item["awaiting_transfer_details"]),
             }
             for item in items
         ]

@@ -735,6 +735,16 @@
               addMessage(item.answer || "", "bot");
               return;
             }
+            // 客户当时说了"转人工"之类，但还没来得及提交"具体想咨询的问题"这个补充表单
+            // （question 字段目前还是"转人工"这句占位文本）：不能像普通未命中问题那样恢复出
+            // 一句只会一直不变的"已收到您的问题…"，那样客户就永远没机会把真正想问的内容
+            // 告诉客服了。这里要重新弹出同一个"请描述您的问题"输入框，让客户能继续把这个
+            // 流程走完，跟第一次遇到时看到的一模一样。
+            if (item.awaiting_transfer_details) {
+              const bubble = addMessage("", "bot");
+              renderTransferQuestionPrompt(bubble, item.id, item.mode_used === "manual", item.mode_used);
+              return;
+            }
             // 还没有最终回复的问题（客服/AI 还在处理）：恢复出等待中的提示文案，并接回轮询，
             // 拿到结果后会自动补上回复，客户不需要手动刷新第二次。
             const bubble = addMessage("", "bot");

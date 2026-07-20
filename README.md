@@ -73,8 +73,9 @@
 
 `static/index.html` 用 `sessionStorage`（不是 `localStorage`）保存客户浏览器的会话标识 `fuyunhon_session_id`——`sessionStorage` 的生命周期跟"标签页"绑定：刷新页面（F5）不会清空，关闭标签页/浏览器窗口才会清空。借着这个特性：
 
-- **刷新页面**：`sessionStorage` 里的会话 id 还在，页面加载时会调用 `GET /api/conversations/by-session/{session_id}`（只返回客户自己该看到的字段：问题、最终回复、状态、模式、题库命中情况、是否已留邮箱 `has_email`、邮箱原文 `email`，不含 AI 建议草稿、题库匹配详情、客户 IP 等客服专用信息——客户自己留的邮箱原样返回给自己不算泄露）把历史问答重新渲染成消息气泡；如果最后一条问题还没有最终回复，会恢复出对应的等待提示文案并接回 `pollAnswer(..., { question, emailProvided: item.has_email, email: item.email })` 继续轮询，避免刷新后又重复弹一次"留邮箱"提示，也能在带具体邮箱的确认文案里正确回显。
+- **刷新页面**：`sessionStorage` 里的会话 id 还在，页面加载时会调用 `GET /api/conversations/by-session/{session_id}`（只返回客户自己该看到的字段：问题、最终回复、状态、模式、题库命中情况、是否已留邮箱 `has_email`、邮箱原文 `email`、是否还在等待补充问题 `awaiting_transfer_details`，不含 AI 建议草稿、题库匹配详情、客户 IP 等客服专用信息——客户自己留的邮箱原样返回给自己不算泄露）把历史问答重新渲染成消息气泡；如果最后一条问题还没有最终回复，会恢复出对应的等待提示文案并接回 `pollAnswer(..., { question, emailProvided: item.has_email, email: item.email })` 继续轮询，避免刷新后又重复弹一次"留邮箱"提示，也能在带具体邮箱的确认文案里正确回显。
 - **关闭标签页/浏览器**：`sessionStorage` 被清空，下次打开是全新的会话 id，不会带着之前的聊天记录，工作台里也会被当成一个新的"访客编号"（`database.list_sessions` 按 `session_id` 首次提问时间分配编号）。
+- **主动"转人工"但还没提交补充问题表单就刷新了页面**：这条对话的 `question` 字段目前还是"转人工"这句占位文本，如果按未命中题库的规则去恢复，会永久卡在一句不会再变的"已收到您的问题，正在为您转接人工客服，请稍候"，客户就没法再补充真正想问的内容了——这是刷新会改变客户端行为的一个真实 bug。修复方式：数据库给 `conversations` 表加了一列 `awaiting_transfer_details`（`is_explicit_transfer` 分支创建对话后置为 1；`/transfer-question` 提交时 `database.set_question` 会自动清成 0），`restoreHistory()` 读到这个字段为真时，不走 `pollAnswer`，而是重新调用 `renderTransferQuestionPrompt(...)`，弹出跟第一次一模一样的"请描述您的问题"输入框，让客户能接着把流程走完。
 
 无关闲聊/荒谬提问（`_classify_irrelevant` 命中的情况）现在也会完整落库、正常返回真实的 `conversation_id`，因此刷新页面时同样会出现在恢复的历史记录里，跟其他正常问答一样。
 

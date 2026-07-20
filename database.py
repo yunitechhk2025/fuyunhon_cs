@@ -84,6 +84,12 @@ def init_db() -> None:
         # 未命中转人工等待超过 10 秒后，客户可主动留下邮箱；客服据此通过邮件回复。
         # 客户没有留邮箱则此字段始终为空，不会触发任何邮件。
         _add_column_if_missing(conn, "conversations", "customer_email", "TEXT")
+        # 客户明确说"转人工"之后，还没来得及补充说明具体想咨询的问题（question 字段此时
+        # 还是"转人工"这句占位文本）：这个标记为 1；客户提交真正问题后（set_question 里会
+        # 自动清零）变成 0。用于客户端刷新页面恢复历史记录时，判断这条对话是应该继续显示
+        # "请描述您的问题"这个输入框，还是显示"已收到您的问题…"这类等待提示——否则刷新后
+        # 客户会永久失去补充问题的入口，只能看到一句不会再变化的等待语。
+        _add_column_if_missing(conn, "conversations", "awaiting_transfer_details", "INTEGER DEFAULT 0")
 
         row = conn.execute("SELECT value FROM settings WHERE key = 'global_mode'").fetchone()
         if row is None:
@@ -220,16 +226,32 @@ def set_ai_suggestion(conversation_id: int, suggestion: str, score: float) -> No
 
 def set_question(conversation_id: int, question: str) -> bool:
     """客户主动说"转人工"之后补充具体问题时，用真实问题内容替换掉"转人工"这句占位提问，
-    方便客服在工作台直接看懂客户想咨询什么。返回 False 表示该对话不存在。"""
+    方便客服在工作台直接看懂客户想咨询什么。同时清掉 awaiting_transfer_details 标记——
+    问题已经补充完整，客户端刷新页面时不应该再弹一次"请描述您的问题"的输入框。
+    返回 False 表示该对话不存在。"""
     with get_conn() as conn:
         row = conn.execute("SELECT id FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
         if row is None:
             return False
         conn.execute(
-            "UPDATE conversations SET question = ?, updated_at = datetime('now') WHERE id = ?",
+            """
+            UPDATE conversations
+            SET question = ?, awaiting_transfer_details = 0, updated_at = datetime('now')
+            WHERE id = ?
+            """,
             (question, conversation_id),
         )
         return True
+
+
+def set_awaiting_transfer_details(conversation_id: int, awaiting: bool) -> None:
+    """客户明确说"转人工"（question 字段还是占位文本）时标记为等待补充问题状态；
+    详见 init_db 里 awaiting_transfer_details 列的说明。"""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE conversations SET awaiting_transfer_details = ? WHERE id = ?",
+            (1 if awaiting else 0, conversation_id),
+        )
 
 
 def set_customer_email(conversation_id: int, email: str) -> bool:
