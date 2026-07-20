@@ -597,7 +597,6 @@
       .msg-meta {
         display: flex;
         flex-wrap: wrap;
-        justify-content: space-between;
         align-items: center;
         gap: 4px 8px;
         font-size: 11px;
@@ -611,6 +610,11 @@
         flex-wrap: wrap;
         gap: 4px;
         justify-content: flex-end;
+        /* 徽章多起来（产品/模式/状态/邮箱）时这一组常常会单独换到下一行——用 justify-content:
+           space-between 控制两个 span 的相对位置在"换行后只剩它自己一个元素"时会失效（没有另一个
+           元素可以"space-between"，直接贴到行首），看起来像是"徽章全部靠左"。改成 margin-left:
+           auto 无论换不换行都能把这一组稳稳推到行的最右边。 */
+        margin-left: auto;
       }
 
       .compose-area {

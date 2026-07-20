@@ -149,7 +149,8 @@
         border-radius: 10px;
         padding: 9px 10px;
         font: inherit;
-        font-size: 14px;
+        /* 同下面 .transfer-question-input：不能低于 16px，否则 iOS Safari 聚焦时会自动放大整页。 */
+        font-size: 16px;
         outline: none;
       }
 
@@ -180,7 +181,9 @@
         border-radius: 10px;
         padding: 9px 10px;
         font: inherit;
-        font-size: 14px;
+        /* 不能低于 16px：iOS Safari 对 font-size < 16px 的输入框，聚焦时会自动放大整页，
+           放大后不会自动还原，表现为"点了输入框/发送后页面显示不全、右边被挤出屏幕"。 */
+        font-size: 16px;
         outline: none;
         resize: vertical;
         box-sizing: border-box;
@@ -340,7 +343,10 @@
 
         textarea {
           min-height: 42px;
-          font-size: 14px;
+          /* 不能低于 16px：iOS Safari 对 font-size < 16px 的输入框，点击聚焦时会自动把整页
+             放大（想让文字看起来更大），放大后页面右侧内容就会被挤出可视区域、显示不全，
+             而且这个放大状态往往不会自动还原——这正是"点击输入框/发送后页面显示不全"的成因。 */
+          font-size: 16px;
           flex-basis: 100%;
         }
 
