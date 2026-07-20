@@ -453,6 +453,26 @@
         return el;
       }
 
+      // 跟 addMessage 的区别：新消息插在指定的 afterEl 后面，而不是无条件追加到整个聊天
+      // 记录的最末尾。刷新页面一次性恢复多条历史对话时，各自的"稍后才出现"提示（比如
+      // 等满 10 秒才出现的"人工客服正忙"）是通过 setTimeout 异步补上的——如果统一都用
+      // addMessage 追加到末尾，等这些计时器几乎同时触发时，几条本该分别跟在各自那条提问
+      // 下面的提示，就会全部堆在聊天记录最下面、跟自己所属的提问完全脱节，看起来次序很乱。
+      // 用这个函数固定插在"这条对话自己最新的一条消息"后面，才能保证每个对话自己的几条
+      // 消息始终连在一起，不会被其他对话的异步更新插队。
+      function addMessageAfter(afterEl, text, role) {
+        const el = document.createElement("div");
+        el.className = `message ${role}`;
+        el.textContent = text;
+        if (afterEl && afterEl.parentNode === messages) {
+          afterEl.insertAdjacentElement("afterend", el);
+        } else {
+          messages.appendChild(el);
+        }
+        messages.scrollTop = messages.scrollHeight;
+        return el;
+      }
+
       function escapeHtml(str) {
         const div = document.createElement("div");
         div.textContent = str == null ? "" : str;
@@ -741,6 +761,12 @@
           const data = await res.json();
           (data.items || []).forEach((item) => {
             addMessage(item.question, "user");
+            // 客户当时如果留了邮箱（无论是主动转人工时一并填写的，还是"人工客服正忙"提示下
+            // 补填的），实时聊天里会单独显示一条「📧 邮箱」的气泡；刷新恢复历史记录时如果漏了
+            // 这一步，客户会发现自己填过的邮箱"凭空消失了"，看起来像是没有被记录下来。
+            if (item.email) {
+              addMessage(`📧 ${item.email}`, "user");
+            }
             if (item.status === "answered") {
               addMessage(item.answer || "", "bot");
               return;
@@ -841,7 +867,10 @@
           : emailProvided
           ? setTimeout(() => {
               if (!answered) {
-                followUpEl = addMessage("", "bot");
+                // 用 addMessageAfter（不是 addMessage）插在 loadingEl 后面：刷新页面一次性
+                // 恢复多条历史对话时，各自的计时器几乎同时触发，如果统一追加到聊天记录最
+                // 末尾，这几条提示会跟自己所属的提问脱节、全部挤在最下面，次序看起来很乱。
+                followUpEl = addMessageAfter(loadingEl, "", "bot");
                 // 客户提交转人工时已经一并留了邮箱，前一条消息已经确认过"已将您的问题
                 // 更新给人工客服"，这里不重复那句话，只说明客服正忙、已经邮件通知客服，
                 // 并带上具体邮箱地址，让客户清楚知道客服会用哪个邮箱回复。
@@ -853,7 +882,7 @@
             }, remainingMs)
           : setTimeout(() => {
               if (!answered) {
-                followUpEl = addMessage("", "bot");
+                followUpEl = addMessageAfter(loadingEl, "", "bot");
                 renderLeaveEmailPrompt(followUpEl, conversationId, question);
               }
             }, remainingMs);
@@ -868,8 +897,9 @@
               clearTimeout(busyTimer);
               // 全人工模式没有 followUpEl（没有留邮箱这套弹窗），但同样不能把客服的回复
               // 直接写进"已收到您的问题，正在为您转接人工客服，请稍候"这条消息里——那句话
-              // 也要保留成一条独立的记录，客服的回复另起一条新消息展示。
-              const targetEl = followUpEl || (isManual ? addMessage("", "bot") : loadingEl);
+              // 也要保留成一条独立的记录，客服的回复另起一条新消息展示（插在 loadingEl
+              // 后面，理由同上，避免多条历史对话同时轮询到结果时彼此的回复次序被打乱）。
+              const targetEl = followUpEl || (isManual ? addMessageAfter(loadingEl, "", "bot") : loadingEl);
               setFinalText(targetEl, data.answer);
               return;
             }
