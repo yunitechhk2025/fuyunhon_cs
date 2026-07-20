@@ -766,7 +766,9 @@
             // 直接请客户补充具体问题（全人工模式下不需要再选填邮箱），同时仍在后台继续轮询，
             // 方便客服在工作台实时回复时也能收到。
             renderTransferQuestionPrompt(loading, data.conversation_id, data.mode === "manual");
-            await pollAnswer(data.conversation_id, loading, false, true, data.mode);
+            // 不 await：轮询会一直持续到客服/AI 给出回复为止（可能很久），
+            // 不能让发送按钮在这整段时间里一直保持禁用，否则客户没法再发下一条消息。
+            pollAnswer(data.conversation_id, loading, false, true, data.mode).catch(() => {});
           } else {
             // 人机协同模式下，若题库已命中（AI 已生成建议、进入自动发送倒计时），
             // 客户看到的应该是"AI 思考中"，不是"转人工"提示——只有未命中时才是真正转人工。
@@ -774,7 +776,8 @@
               loading,
               data.matched ? "AI 正在思考您的问题，请稍候..." : "已收到您的问题，正在为您转接人工客服，请稍候"
             );
-            await pollAnswer(data.conversation_id, loading, data.matched, false, data.mode);
+            // 同上，不 await，避免发送按钮被长时间轮询锁死。
+            pollAnswer(data.conversation_id, loading, data.matched, false, data.mode).catch(() => {});
           }
         } catch (err) {
           setFinalText(loading, `出错了：${err.message}`);
