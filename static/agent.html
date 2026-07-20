@@ -497,6 +497,23 @@
         max-width: 66%;
       }
 
+      /* 产品/模式/状态/邮箱这组徽章：默认（没有 AI 识别结果的极少数旧数据兜底场景）按跟
+         .intent-wrap 一样的缩进独立展示；嵌在 .intent-wrap 内部（紧跟在"AI 识别"标签下面）
+         时，缩进已经由外层 .intent-wrap 提供了，这里就不用再额外缩进一次。 */
+      .msg-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        justify-content: flex-end;
+        margin: 6px 0 8px 42px;
+        max-width: 66%;
+      }
+
+      .intent-wrap .msg-badges {
+        margin: 0 0 8px;
+        max-width: 100%;
+      }
+
       .intent-badge {
         display: inline-flex;
         align-items: center;
@@ -594,27 +611,13 @@
         color: #c62828;
       }
 
+      /* 现在这里只剩"#编号 · 时间"这一项——产品/模式/状态/邮箱徽章已经挪到 AI 识别标签
+         正下方（见 .msg-badges），不用再靠 flex + margin-left:auto 把两组内容分左右展示。 */
       .msg-meta {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 4px 8px;
         font-size: 11px;
         color: #a5aebd;
         margin: 6px 0 4px 42px;
         max-width: 80%;
-      }
-
-      .msg-meta > span:last-child {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px;
-        justify-content: flex-end;
-        /* 徽章多起来（产品/模式/状态/邮箱）时这一组常常会单独换到下一行——用 justify-content:
-           space-between 控制两个 span 的相对位置在"换行后只剩它自己一个元素"时会失效（没有另一个
-           元素可以"space-between"，直接贴到行首），看起来像是"徽章全部靠左"。改成 margin-left:
-           auto 无论换不换行都能把这一组稳稳推到行的最右边。 */
-        margin-left: auto;
       }
 
       .compose-area {
@@ -844,7 +847,8 @@
         .draft-wrap,
         .countdown-note,
         .compose-area,
-        .msg-meta {
+        .msg-meta,
+        .msg-badges {
           margin-left: 0;
           max-width: 100%;
         }
@@ -1657,12 +1661,16 @@
 
       // ---------------- 会话详情（同一用户的完整聊天记录） ----------------
 
-      function renderIntentBlock(item, missHint) {
+      // badgesHtml（产品/模式/状态/邮箱徽章）紧跟在"AI 识别"标签正下方展示，而不是像之前那样
+      // 挪到题库检索结果卡片下面——这样一进入这条消息就能同时看到"AI 判断结果"和"这条消息的
+      // 基本属性"，不需要往下翻。
+      function renderIntentBlock(item, missHint, badgesHtml) {
         if (item.matched === 1) {
           const scoreText = typeof item.match_score === "number" ? `${(item.match_score * 100).toFixed(0)}%` : "-";
           return `
             <div class="intent-wrap">
               <span class="intent-badge hit">✨ AI 识别：命中相关资料（匹配度 ${scoreText}）</span>
+              <div class="msg-badges">${badgesHtml}</div>
               <div class="intent-card">
                 <div class="q">${escapeHtml(item.matched_question || "")}</div>
                 <div>${escapeHtml(item.matched_answer || "")}</div>
@@ -1673,6 +1681,7 @@
           return `
             <div class="intent-wrap">
               <span class="intent-badge miss">⚠️ AI 识别：未找到匹配内容</span>
+              <div class="msg-badges">${badgesHtml}</div>
               <div class="intent-card">${missHint}</div>
             </div>`;
         }
@@ -1688,16 +1697,22 @@
           ? `<span class="badge email" title="客户留下的邮箱，可直接回邮">📧 ${escapeHtml(item.customer_email)}</span>`
           : "";
 
+        const badgesHtml = `${productBadge}${modeBadge}${statusBadge}${emailBadge}`;
+        const intentHtml = renderIntentBlock(
+          item,
+          item.status === "answered" ? "现有题库/资料中暂无对应说明。" : "现有题库/资料中暂无对应说明，请客服根据实际情况人工回复，或补充资料后重新检索。",
+          badgesHtml
+        );
+
         let html = `
           <div class="bubble-block" data-msg-id="${item.id}">
             <div class="bubble-row customer">
               <div class="bubble-avatar customer" title="客户">🧑</div>
               <div class="bubble customer">${escapeHtml(item.question)}</div>
             </div>
-            ${renderIntentBlock(item, item.status === "answered" ? "现有题库/资料中暂无对应说明。" : "现有题库/资料中暂无对应说明，请客服根据实际情况人工回复，或补充资料后重新检索。")}
+            ${intentHtml || `<div class="msg-badges">${badgesHtml}</div>`}
             <div class="msg-meta">
               <span>#${item.id} · ${formatBeijingTime(item.created_at)}</span>
-              <span>${productBadge}${modeBadge}${statusBadge}${emailBadge}</span>
             </div>`;
 
         if (item.status === "answered") {

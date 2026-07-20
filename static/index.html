@@ -485,7 +485,7 @@
         el.innerHTML = "";
 
         const textEl = document.createElement("div");
-        textEl.textContent = "人工客服正忙，留下你的電郵，客服稍後通過電郵回復您";
+        textEl.textContent = "人工客服正忙，留下你的邮箱，客服稍后通过邮箱回复您";
         el.appendChild(textEl);
 
         const row = document.createElement("div");
@@ -529,7 +529,11 @@
             });
             if (!res.ok) throw new Error();
             row.remove();
-            showStatus("已将您的问题更新给人工客服，请耐心等待客服通过邮件回复您～");
+            statusEl.remove();
+            // 客户填的邮箱、以及系统的确认，都各自单独成一条正常大小的消息保留下来，
+            // 不再挤在"人工客服正忙"这条提示下面变成一行不起眼的小字。
+            addMessage(`📧 ${email}`, "user");
+            addMessage("已将您的问题更新给人工客服，请耐心等待客服通过邮件回复您～", "bot");
           } catch (err) {
             submitBtn.disabled = false;
             showStatus("提交失败，请稍后重试");
@@ -544,7 +548,7 @@
       // 邮箱选填，留下真实格式的邮箱后客服可以直接通过邮件回复，不填也不影响问题内容的更新。
       // 全人工模式下客服本就要一直盯着工作台处理每条对话，完全不需要留邮箱这套机制，
       // 所以 isManual=true 时只显示问题输入框，不渲染邮箱相关的这一整套 UI。
-      function renderTransferQuestionPrompt(el, conversationId, isManual) {
+      function renderTransferQuestionPrompt(el, conversationId, isManual, mode) {
         el.innerHTML = "";
 
         const textEl = document.createElement("div");
@@ -613,7 +617,27 @@
             } else {
               submitBtn.remove();
             }
-            showStatus("已将您的问题更新给人工客服，请耐心等待客服回复～");
+            statusEl.remove();
+
+            // 客户填的问题、邮箱都各自单独成一条正常大小的消息保留下来，不再挤在上面那句
+            // "好的，请您简单描述…"提示下面变成一行不起眼的小字。
+            addMessage(question, "user");
+            if (email) {
+              addMessage(`📧 ${email}`, "user");
+            }
+
+            const followUp = addMessage("", "bot");
+            if (email) {
+              // 已经留了邮箱：跟"题库未命中"的正常流程完全一样，直接进入等待状态，
+              // 不用再额外问一遍邮箱（skipBusyTimer=true，不会再弹"人工客服正忙"提示）。
+              setThinkingText(followUp, "已收到您的问题，正在为您转接人工客服，请稍候");
+              pollAnswer(conversationId, followUp, false, true, mode).catch(() => {});
+            } else {
+              // 没留邮箱：先确认已经把具体问题更新给客服；如果等太久（>10秒）客服仍未回复，
+              // 会像常规流程一样在下面新增一条"人工客服正忙，留邮箱"的提示。
+              setFinalText(followUp, `已将你的问题「${question}」更新给人工客服。`);
+              pollAnswer(conversationId, followUp, false, false, mode).catch(() => {});
+            }
           } catch (err) {
             submitBtn.disabled = false;
             showStatus("提交失败，请稍后重试");
@@ -810,12 +834,10 @@
             setFinalText(loading, data.answer);
           } else if (data.need_transfer_details) {
             // 客户直接说了"转人工"之类，明确要求转接真人：不用再演"AI 思考/等待"这段过程，
-            // 直接请客户补充具体问题（全人工模式下不需要再选填邮箱），同时仍在后台继续轮询，
-            // 方便客服在工作台实时回复时也能收到。
-            renderTransferQuestionPrompt(loading, data.conversation_id, data.mode === "manual");
-            // 不 await：轮询会一直持续到客服/AI 给出回复为止（可能很久），
-            // 不能让发送按钮在这整段时间里一直保持禁用，否则客户没法再发下一条消息。
-            pollAnswer(data.conversation_id, loading, false, true, data.mode).catch(() => {});
+            // 直接请客户补充具体问题（全人工模式下不需要再选填邮箱）。这里先不轮询——客户还
+            // 没提交真正想问的问题，提交之后才会在 renderTransferQuestionPrompt 里另起一条
+            // 新消息并开始轮询，避免两边同时轮询同一个对话、互相抢着改同一条消息内容。
+            renderTransferQuestionPrompt(loading, data.conversation_id, data.mode === "manual", data.mode);
           } else {
             // 人机协同模式下，若题库已命中（AI 已生成建议、进入自动发送倒计时），
             // 客户看到的应该是"AI 思考中"，不是"转人工"提示——只有未命中时才是真正转人工。

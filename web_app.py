@@ -715,15 +715,20 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
     # 要在"无关闲聊"判断之前拦截，否则可能被误判成"与产品无关"而回一句引导语（真实发生过的 bug）。
     is_explicit_transfer = not is_greeting and _is_explicit_transfer_request(question)
 
-    # 与产品咨询完全无关的闲聊/荒谬提问（"吃饭了吗""这产品对国家安全有危害吗"之类）：整个环节
-    # 都不落库、不进人工队列、不发邮件提醒，只在客户端展示一句引导语；管理员可在工作台随时关闭
-    # 这个判断（一键退回"全部按正常问题处理"）。打招呼、明确要求转人工的都已在上面单独处理，
-    # 这里跳过，避免重复消耗一次 AI 调用、也避免被误判。
+    conversation_id = database.create_conversation(session_id, question, mode, _client_ip(request), product)
+
+    # 与产品咨询完全无关的闲聊/荒谬提问（"吃饭了吗""这产品对国家安全有危害吗"之类）：不进人工
+    # 队列、不发邮件提醒，只在客户端展示一句引导语；但仍然完整落库（标记成 matched=True、附上
+    # "无关闲聊/非常规提问"这个说明，跟问候语的记录方式一致），方便管理员事后能在对话记录/刷新
+    # 恢复的聊天记录里都看到这条消息，同时也不会被误计入"转人工请求次数"这类统计。管理员可在
+    # 工作台随时关闭这个判断（一键退回"全部按正常问题处理"）。打招呼、明确要求转人工的都已在
+    # 上面单独处理，这里跳过，避免重复消耗一次 AI 调用、也避免被误判。
     if not is_greeting and not is_explicit_transfer and database.get_setting("skip_irrelevant_enabled", "true") == "true":
         if _classify_irrelevant(question, product, req.model):
-            return AskResponse(conversation_id=0, status="answered", answer=_irrelevant_reply(product), mode=mode)
-
-    conversation_id = database.create_conversation(session_id, question, mode, _client_ip(request), product)
+            irrelevant_reply = _irrelevant_reply(product)
+            database.set_retrieval_info(conversation_id, True, "无关闲聊/非常规提问", irrelevant_reply, 1.0)
+            database.mark_answered(conversation_id, irrelevant_reply)
+            return AskResponse(conversation_id=conversation_id, status="answered", answer=irrelevant_reply, mode=mode)
 
     # 单纯打招呼（"你好""在吗"等，不带具体问题）：任何模式下都直接由 AI 回一句问候语并结束，
     # 不算"题库未命中"，不转人工、不发邮件提醒——避免客户每次只是打个招呼就惊动客服。
