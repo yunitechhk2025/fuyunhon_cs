@@ -23,10 +23,16 @@
       .page {
         /* 手机浏览器的地址栏/工具栏会动态伸缩，导致 100vh 计算不稳定，
            曾出现过页面被意外滚动、顶部标题被顶到可视区域外的问题（尤其点击输入框后）。
-           用 position: fixed + inset: 0 把整个应用钉死在可视窗口内，不参与文档滚动，从根源上避免这个问题；
-           不再额外指定 width/height，避免和 inset 的四个偏移量互相冲突。 */
+           用 position: fixed 把整个应用钉死在可视窗口内，不参与文档滚动，从根源上避免这个问题。
+           iPhone（Safari/微信内置浏览器）弹出键盘时，只有"视觉视口"会缩小，用来定位 fixed 元素的
+           "布局视口"并不会跟着变化——如果高度写死 100vh/inset:0，键盘弹出后整块应用还是按旧高度
+           占位，导致输入框被顶到屏幕中间这种错位。改成用下面 JS 动态写入的 --app-height（等于
+           window.visualViewport.height）来控制高度，键盘弹出/收起时会跟着实时调整，不再错位。 */
         position: fixed;
-        inset: 0;
+        top: var(--app-offset-top, 0px);
+        left: 0;
+        width: 100%;
+        height: var(--app-height, 100vh);
         display: flex;
       }
 
@@ -358,6 +364,29 @@
     </div>
 
     <script>
+      // ---------------- iOS 键盘弹出时的视口修正 ----------------
+      // Safari/微信内置浏览器弹出键盘后，只有 visualViewport（视觉视口）会变矮，
+      // .page 用来定位的布局视口不会变——所以要靠 visualViewport 的实时高度去改写
+      // --app-height，键盘弹出/收起时 .page 才会跟着同步收缩/恢复，不再把输入框顶飞到屏幕中间。
+      // 键盘弹出时，部分机型/浏览器（如微信内置浏览器）还会把"视觉视口"相对布局视口向下滚动一段
+      // 距离（用来在键盘上方露出地址栏），这段偏移量要同步写进 --app-offset-top，否则固定定位的
+      // .page 仍按布局视口原点定位，会被顶到可视区域外面。
+      function syncAppViewport() {
+        const vv = window.visualViewport;
+        const height = vv ? vv.height : window.innerHeight;
+        const offsetTop = vv ? vv.offsetTop : 0;
+        document.documentElement.style.setProperty("--app-height", `${height}px`);
+        document.documentElement.style.setProperty("--app-offset-top", `${offsetTop}px`);
+      }
+
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", syncAppViewport);
+        window.visualViewport.addEventListener("scroll", syncAppViewport);
+      } else {
+        window.addEventListener("resize", syncAppViewport);
+      }
+      syncAppViewport();
+
       const form = document.getElementById("form");
       const input = document.getElementById("input");
       const send = document.getElementById("send");
