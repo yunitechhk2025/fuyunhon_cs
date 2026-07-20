@@ -371,6 +371,11 @@
         color: #6b3fd4;
       }
 
+      .badge.email {
+        background: #e8f6ff;
+        color: #1478b8;
+      }
+
       /* ---------- 右侧：会话详情（聊天窗） ---------- */
       .thread {
         flex: 1;
@@ -1604,12 +1609,16 @@
         const modeBadge = `<span class="badge ${item.mode_used}">${MODE_META[item.mode_used]?.label || item.mode_used}</span>`;
         const statusBadge = `<span class="badge ${item.status}">${STATUS_LABEL[item.status] || item.status}</span>`;
         const productBadge = `<span class="badge product">📦 ${escapeHtml(productLabel(item.product))}</span>`;
+        // 客户在"人工客服正忙"提示下主动留下的邮箱：没有留邮箱时该字段为空，不显示这个徽章。
+        const emailBadge = item.customer_email
+          ? `<span class="badge email" title="客户留下的邮箱，可直接回邮">📧 ${escapeHtml(item.customer_email)}</span>`
+          : "";
 
         let html = `
           <div class="bubble-block" data-msg-id="${item.id}">
             <div class="msg-meta">
               <span>#${item.id} · ${item.created_at || ""}</span>
-              <span>${productBadge}${modeBadge}${statusBadge}</span>
+              <span>${productBadge}${modeBadge}${statusBadge}${emailBadge}</span>
             </div>
             <div class="bubble-row customer">
               <div class="bubble-avatar customer" title="客户">🧑</div>

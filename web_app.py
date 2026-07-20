@@ -98,6 +98,10 @@ class NotifyEmailRequest(BaseModel):
     email: str
 
 
+class LeaveEmailRequest(BaseModel):
+    email: str
+
+
 class SmtpSettingsRequest(BaseModel):
     host: str
     port: int = 587
@@ -327,6 +331,29 @@ async def _notify_agent_unresolved(conversation_id: int, product: str, question:
         await asyncio.to_thread(send_email, subject, body, _notify_recipient(), **_smtp_overrides())
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] 转人工提醒邮件发送失败: {exc}", file=sys.stderr)
+
+
+async def _notify_customer_email_left(
+    conversation_id: int, product: str, question: str, mode: str, customer_email: str
+) -> None:
+    """客户在"人工客服正忙"提示下主动留下了邮箱：额外发一封邮件告知客服，
+    客服可直接通过该邮箱回复客户，而不必等客户重新打开网页查看。
+    客户不留邮箱则此函数完全不会被调用，不会触发任何邮件。"""
+    product_label = PRODUCTS.get(product, {}).get("label", product or "未知产品")
+    mode_label = MODE_LABELS.get(mode, mode)
+    subject = f"【客服提醒】客户留下邮箱待人工回复（对话 #{conversation_id}）"
+    body = (
+        f"产品：{product_label}\n"
+        f"工作模式：{mode_label}\n"
+        f"客户提问：{question}\n"
+        f"客户邮箱：{customer_email}\n"
+        f"对话编号：#{conversation_id}\n\n"
+        f"客户因等待较久，主动留下了邮箱，请客服直接通过邮件回复客户。\n"
+    )
+    try:
+        await asyncio.to_thread(send_email, subject, body, _notify_recipient(), **_smtp_overrides())
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] 客户留邮箱提醒邮件发送失败: {exc}", file=sys.stderr)
 
 
 async def _reminder_loop() -> None:
@@ -673,6 +700,34 @@ def get_conversation_status(conversation_id: int) -> dict:
         "status": conversation["status"],
         "answer": conversation["final_answer"],
     }
+
+
+@app.post("/api/conversations/{conversation_id}/leave-email")
+async def leave_customer_email(conversation_id: int, req: LeaveEmailRequest) -> dict:
+    """客户在"人工客服正忙"提示下主动留下邮箱：仅在客户填写并提交时才会调用此接口，
+    客户不填邮箱则完全不会触发这条邮件通知，与其他转人工场景各自独立。"""
+    email = req.email.strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="请输入有效的邮箱地址")
+
+    conversation = database.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="对话不存在")
+
+    saved = database.set_customer_email(conversation_id, email)
+    if not saved:
+        raise HTTPException(status_code=404, detail="对话不存在")
+
+    asyncio.create_task(
+        _notify_customer_email_left(
+            conversation_id,
+            conversation["product"],
+            conversation["question"],
+            conversation["mode_used"],
+            email,
+        )
+    )
+    return {"success": True}
 
 
 # ---------------- 客服端 ----------------

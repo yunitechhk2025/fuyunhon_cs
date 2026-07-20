@@ -127,6 +127,43 @@
         border-top-right-radius: 4px;
       }
 
+      /* 未命中转人工等太久时，让客户就地留下邮箱，方便客服后续通过邮件回复；
+         客户不填邮箱就不提交，不会触发任何邮件。 */
+      .email-capture {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+        flex-wrap: wrap;
+      }
+
+      .email-capture input {
+        flex: 1;
+        min-width: 160px;
+        border: 1px solid #d7dfec;
+        border-radius: 10px;
+        padding: 9px 10px;
+        font: inherit;
+        font-size: 14px;
+        outline: none;
+      }
+
+      .email-capture input:focus {
+        border-color: #2f6fed;
+      }
+
+      .email-capture button {
+        width: auto;
+        padding: 9px 16px;
+        border-radius: 10px;
+        font-size: 14px;
+      }
+
+      .email-capture-status {
+        margin-top: 8px;
+        font-size: 13px;
+        color: #6b7686;
+      }
+
       .composer {
         display: flex;
         gap: 12px;
@@ -358,15 +395,81 @@
 
       const THINKING_DOTS_HTML = '<span class="typing-dots"><span></span><span></span><span></span></span>';
 
-      // 还在等结果（AI 思考中 / 排队转人工中）时用这个：文字 + 跳动的小圆点，让客户感觉到"还在处理"。
+      // 跳动小圆点只用来代替文末的 "..."：有省略号才显示动效；文末是 ～/~ 或普通句号时不加圆点。
       function setThinkingText(el, text) {
-        el.innerHTML = escapeHtml(text) + THINKING_DOTS_HTML;
+        const raw = text == null ? "" : String(text);
+        if (/(?:\.{3}|…)+$/.test(raw)) {
+          const base = raw.replace(/(?:\.{3}|…)+$/, "");
+          el.innerHTML = escapeHtml(base) + THINKING_DOTS_HTML;
+        } else {
+          el.textContent = raw;
+        }
         messages.scrollTop = messages.scrollHeight;
       }
 
       // 已经有确定结果（真正的回复，或彻底放弃等待）时用这个：纯文字，不再带动态点。
       function setFinalText(el, text) {
         el.textContent = text;
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      // 未命中转人工等太久（10 秒）时，就地给客户一个留邮箱的入口：填了才提交，
+      // 不填就什么都不会发生，不会触发任何邮件通知。
+      function renderLeaveEmailPrompt(el, conversationId) {
+        el.innerHTML = "";
+
+        const textEl = document.createElement("div");
+        textEl.textContent = "人工客服正忙，留下你的電郵，客服稍後通過電郵回復您";
+        el.appendChild(textEl);
+
+        const row = document.createElement("div");
+        row.className = "email-capture";
+
+        const emailInput = document.createElement("input");
+        emailInput.type = "email";
+        emailInput.placeholder = "请输入您的邮箱";
+
+        const submitBtn = document.createElement("button");
+        submitBtn.type = "button";
+        submitBtn.textContent = "提交";
+
+        row.appendChild(emailInput);
+        row.appendChild(submitBtn);
+        el.appendChild(row);
+
+        const statusEl = document.createElement("div");
+        statusEl.className = "email-capture-status";
+        statusEl.style.display = "none";
+        el.appendChild(statusEl);
+
+        function showStatus(text) {
+          statusEl.textContent = text;
+          statusEl.style.display = "block";
+          messages.scrollTop = messages.scrollHeight;
+        }
+
+        submitBtn.addEventListener("click", async () => {
+          const email = emailInput.value.trim();
+          if (!email || !email.includes("@")) {
+            showStatus("请输入正确的邮箱地址");
+            return;
+          }
+          submitBtn.disabled = true;
+          try {
+            const res = await fetch(`/api/conversations/${conversationId}/leave-email`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email }),
+            });
+            if (!res.ok) throw new Error();
+            row.remove();
+            showStatus("已收到您的邮箱，客服会尽快通过邮件回复您～");
+          } catch (err) {
+            submitBtn.disabled = false;
+            showStatus("提交失败，请稍后重试");
+          }
+        });
+
         messages.scrollTop = messages.scrollHeight;
       }
 
@@ -453,17 +556,16 @@
 
         // matched=true 说明题库已命中、AI 正在准备自动发送，这个等待过程从头到尾都跟"人工客服"无关，
         // 全程只应该出现"AI"相关的话术，绝不能出现"转人工/人工客服正忙"这类文案，避免误导客户。
-        // 只有 matched=false（题库未命中，真正转人工）时，才会在等太久后提示"人工客服正忙"。
-        // 提示切换后仍在继续轮询，所以还是带跳动点的"思考中"样式，不是最终结果。
+        // 只有 matched=false（题库未命中，真正转人工）时，才会在等太久后提示客户就地留下邮箱。
         const busyTimer = matched
           ? setTimeout(() => {
               if (!answered) {
-                setThinkingText(loadingEl, "AI 思考时间较长，请耐心等待");
+                setFinalText(loadingEl, "AI 思考时间较长，请耐心等待");
               }
             }, 10000)
           : setTimeout(() => {
               if (!answered) {
-                setThinkingText(loadingEl, "人工客服正忙，请您稍后查看回复，感谢您的耐心等待～");
+                renderLeaveEmailPrompt(loadingEl, conversationId);
               }
             }, 10000);
 
@@ -483,12 +585,13 @@
           }
         }
         clearTimeout(busyTimer);
-        setFinalText(
-          loadingEl,
-          matched
-            ? "AI 暂时无法给出回复，请稍后重新提问，或联系人工客服协助处理。"
-            : "客服暂时繁忙，请稍后重新提问或换个方式联系我们。"
-        );
+        if (matched) {
+          setFinalText(loadingEl, "AI 暂时无法给出回复，请稍后重新提问，或联系人工客服协助处理。");
+        } else if (!loadingEl.querySelector(".email-capture")) {
+          // 未命中场景下，若客户还没提交邮箱，留邮箱的入口继续保留，方便客户随时填写；
+          // 只有客户已经提交过（邮箱输入框已被移除）才会走到这里，用纯文字收尾。
+          setFinalText(loadingEl, "客服暂时繁忙，请稍后重新提问或换个方式联系我们。");
+        }
       }
 
       form.addEventListener("submit", async (event) => {
@@ -515,7 +618,7 @@
             // 客户看到的应该是"AI 思考中"，不是"转人工"提示——只有未命中时才是真正转人工。
             setThinkingText(
               loading,
-              data.matched ? "AI 正在思考您的问题，请稍候..." : "已收到您的问题，正在为您转接人工客服，请稍候..."
+              data.matched ? "AI 正在思考您的问题，请稍候..." : "已收到您的问题，正在为您转接人工客服，请稍候"
             );
             await pollAnswer(data.conversation_id, loading, data.matched);
           }

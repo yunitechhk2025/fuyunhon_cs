@@ -81,6 +81,9 @@ def init_db() -> None:
         _add_column_if_missing(conn, "conversations", "auto_send_at", "TEXT")
         # 记录本次提问针对的产品（不同产品各自有独立题库），便于客服区分处理
         _add_column_if_missing(conn, "conversations", "product", "TEXT")
+        # 未命中转人工等待超过 10 秒后，客户可主动留下邮箱；客服据此通过邮件回复。
+        # 客户没有留邮箱则此字段始终为空，不会触发任何邮件。
+        _add_column_if_missing(conn, "conversations", "customer_email", "TEXT")
 
         row = conn.execute("SELECT value FROM settings WHERE key = 'global_mode'").fetchone()
         if row is None:
@@ -213,6 +216,19 @@ def set_ai_suggestion(conversation_id: int, suggestion: str, score: float) -> No
             """,
             (suggestion, score, conversation_id),
         )
+
+
+def set_customer_email(conversation_id: int, email: str) -> bool:
+    """记录客户在"人工客服正忙"提示下主动留下的邮箱。返回 False 表示该对话不存在。"""
+    with get_conn() as conn:
+        row = conn.execute("SELECT id FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        if row is None:
+            return False
+        conn.execute(
+            "UPDATE conversations SET customer_email = ?, updated_at = datetime('now') WHERE id = ?",
+            (email, conversation_id),
+        )
+        return True
 
 
 def set_auto_send_at(conversation_id: int, auto_send_at: Optional[str]) -> None:
