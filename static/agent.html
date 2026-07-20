@@ -1735,6 +1735,16 @@
       const NEAR_BOTTOM_THRESHOLD_PX = 80;
 
       function renderThread() {
+        // 客服正在回复框里输入时（包括中文输入法还没上屏的拼音候选词）跳过这次整段重渲染：
+        // WebSocket 推送、5 秒兜底轮询随时可能触发 renderThread，如果这时候把 innerHTML 整个
+        // 替换掉，输入框会变成一个全新的 DOM 节点——草稿箱只能恢复"已经敲下的字"，但输入法
+        // 里还没上屏的候选词是绑定在原来那个 DOM 节点上的，节点一没，候选词直接消失，
+        // 表现出来就是"打着字，打一半突然没了"。等客服点开别处（失焦）后再补一次渲染来追平。
+        const activeEl = document.activeElement;
+        if (activeEl && activeEl.matches && activeEl.matches("[data-answer-input]")) {
+          return;
+        }
+
         const session = sessions.find((s) => s.session_id === selectedSessionId);
         if (!session) {
           lastThreadSessionId = null;
@@ -1820,6 +1830,11 @@
           // 重建出来的输入框也能读到草稿箱里的最新内容，不会出现"打字打到一半突然清空"的情况。
           textarea.addEventListener("input", () => {
             composeDrafts[id] = textarea.value;
+          });
+          // 输入期间 renderThread 会跳过重渲染（见上面 renderThread 里的说明），失焦后主动
+          // 补一次渲染，把输入期间攒下的新消息/状态变化追平，不用等下一次轮询/推送。
+          textarea.addEventListener("blur", () => {
+            renderThread();
           });
         });
 

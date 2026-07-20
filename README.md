@@ -70,6 +70,8 @@
 
 由于工作台会定期（WebSocket 推送 + 5 秒兜底轮询）刷新整个消息列表，`static/agent.html` 用一个按对话 id 索引的 `composeDrafts` 内存对象缓存客服正在输入但还没发送的草稿：`textarea` 的 `input` 事件把内容写入草稿箱，重新渲染时优先读草稿箱、而不是每次都用 AI 建议覆盖，避免客服打字打到一半被刷新清空；发送成功或对话变为已回复后清除对应草稿。
 
+草稿箱只能保住"已经敲下确认的字"，保不住中文输入法里还没上屏的拼音候选词——那部分状态是绑定在具体的 `textarea` DOM 节点上的，如果这时候整段重渲染（`renderThread` 每次都会 `innerHTML` 整个替换掉消息列表），候选词所在的节点被销毁重建，候选词就直接丢了。所以 `renderThread()` 开头会判断 `document.activeElement` 是不是当前正聚焦在某个 `[data-answer-input]` 输入框上，如果是就直接跳过这次渲染（不触碰 DOM）；`textarea` 的 `blur` 事件会补触发一次 `renderThread()`，把输入期间攒下的更新追平。
+
 ## 1) 准备 Excel 题库
 
 把你的 Excel 文件放到当前目录，例如：`客服知识库.xlsx`。
