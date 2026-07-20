@@ -481,7 +481,7 @@
 
       // 未命中转人工等太久（10 秒）时，就地给客户一个留邮箱的入口：填了才提交，
       // 不填就什么都不会发生，不会触发任何邮件通知。
-      function renderLeaveEmailPrompt(el, conversationId) {
+      function renderLeaveEmailPrompt(el, conversationId, question) {
         el.innerHTML = "";
 
         const textEl = document.createElement("div");
@@ -531,9 +531,13 @@
             row.remove();
             statusEl.remove();
             // 客户填的邮箱、以及系统的确认，都各自单独成一条正常大小的消息保留下来，
-            // 不再挤在"人工客服正忙"这条提示下面变成一行不起眼的小字。
+            // 不再挤在"人工客服正忙"这条提示下面变成一行不起眼的小字。确认文案里要同时带上
+            // 客户具体问的是什么、以及客服会用哪个邮箱回复，而不是一句不带内容的泛泛确认。
             addMessage(`📧 ${email}`, "user");
-            addMessage("已将您的问题更新给人工客服，请耐心等待客服通过邮件回复您～", "bot");
+            const confirmText = question
+              ? `已将您的问题「${question}」更新给人工客服，请耐心等待客服通过邮箱【${email}】回复您～`
+              : `已将您的问题更新给人工客服，请耐心等待客服通过邮箱【${email}】回复您～`;
+            addMessage(confirmText, "bot");
           } catch (err) {
             submitBtn.disabled = false;
             showStatus("提交失败，请稍后重试");
@@ -628,15 +632,21 @@
 
             const followUp = addMessage("", "bot");
             if (email) {
-              // 已经留了邮箱：跟"题库未命中"的正常流程完全一样，直接进入等待状态，
-              // 不用再额外问一遍邮箱（skipBusyTimer=true，不会再弹"人工客服正忙"提示）。
-              setThinkingText(followUp, "已收到您的问题，正在为您转接人工客服，请稍候");
-              pollAnswer(conversationId, followUp, false, true, mode).catch(() => {});
+              // 已经留了邮箱：马上确认已经把具体问题更新给客服（带上问题内容，不是一句
+              // 不带内容的泛泛确认）；如果等满 10 秒仍未有客服回复，pollAnswer 会再补一条
+              // "请耐心等待客服通过邮箱【xxx】回复您～"的提示，带上客户刚填的具体邮箱
+              // （emailProvided=true，不会再弹一次输入邮箱的框，因为邮箱已经填过了）。
+              setFinalText(followUp, `已将您的问题「${question}」更新给人工客服，请耐心等待客服回复您～`);
+              pollAnswer(conversationId, followUp, false, mode, {
+                question,
+                emailProvided: true,
+                email,
+              }).catch(() => {});
             } else {
               // 没留邮箱：先确认已经把具体问题更新给客服；如果等太久（>10秒）客服仍未回复，
               // 会像常规流程一样在下面新增一条"人工客服正忙，留邮箱"的提示。
               setFinalText(followUp, `已将你的问题「${question}」更新给人工客服。`);
-              pollAnswer(conversationId, followUp, false, false, mode).catch(() => {});
+              pollAnswer(conversationId, followUp, false, mode, { question, emailProvided: false }).catch(() => {});
             }
           } catch (err) {
             submitBtn.disabled = false;
@@ -732,7 +742,11 @@
               bubble,
               item.matched ? "AI 正在思考您的问题，请稍候..." : "已收到您的问题，正在为您转接人工客服，请稍候"
             );
-            pollAnswer(item.id, bubble, item.matched, false, item.mode_used).catch(() => {});
+            pollAnswer(item.id, bubble, item.matched, item.mode_used, {
+              question: item.question,
+              emailProvided: item.has_email,
+              email: item.email || "",
+            }).catch(() => {});
           });
         } catch (err) {
           // 拉取历史失败时静默忽略，不影响客户继续正常提问
@@ -760,7 +774,17 @@
       // 涉及转人工的情况（matched=false）在 10 秒时已经直接进入"留邮箱/补充问题"的转人工机制，
       // 客户随时可以在那个入口留下联系方式，不需要再额外设一个"等 10 分钟后放弃"的兜底文案；
       // 这里持续轮询直到客服/AI 给出最终回复为止，客户不需要手动刷新页面。
-      async function pollAnswer(conversationId, loadingEl, matched, skipBusyTimer, mode) {
+      // options.question：客户具体问的内容，用于后续"已将您的问题「XXX」更新给人工客服…"这类
+      // 确认文案里回显具体内容，而不是一句不带内容的泛泛确认。
+      // options.emailProvided：客户是否已经在提交转人工问题的同时留了邮箱——留过了就不用再
+      // 弹一次"留邮箱"的输入框，10 秒后只需要换成一条静态确认消息即可。
+      // options.email：客户具体留的邮箱地址，用于 10 秒后的确认文案里回显"客服会通过这个
+      // 邮箱回复您"，而不是一句不带具体邮箱的泛泛确认。
+      async function pollAnswer(conversationId, loadingEl, matched, mode, options) {
+        options = options || {};
+        const question = options.question || "";
+        const emailProvided = !!options.emailProvided;
+        const email = options.email || "";
         let answered = false;
         // 未命中题库、真正转人工时，"人工客服正忙"提示会作为新的一条消息追加在下面，
         // 不会覆盖掉前面"已收到您的问题，正在为您转接人工客服，请稍候"这条消息——
@@ -771,13 +795,13 @@
 
         // matched=true 说明题库已命中、AI 正在准备自动发送，这个等待过程从头到尾都跟"人工客服"无关，
         // 全程只应该出现"AI"相关的话术，绝不能出现"转人工/人工客服正忙"这类文案，避免误导客户。
-        // 只有 matched=false（题库未命中，真正转人工）时，才会在等太久后提示客户就地留下邮箱。
-        // skipBusyTimer=true：客户已经明确要求转人工、留邮箱入口已经立即展示过了，不需要再等 10 秒
-        // 后重复渲染一次（避免打断客户正在填写的邮箱输入框）。
+        // 只有 matched=false（题库未命中，真正转人工）时，才会在等太久后提示客户就地留下邮箱；
+        // 如果客户已经留了邮箱（emailProvided=true，来自主动转人工时一并填写的邮箱），则不需要
+        // 再弹一次输入框，直接换成一条"已更新给人工客服"的静态确认即可。
         // 全人工模式完全不需要"留邮箱"这套机制——问题已经直接进了工作台待处理队列，客服本就
         // 要一直盯着处理，所以全人工模式下即使等了 10 秒也不弹任何提示，安静持续轮询即可。
         const isManual = mode === "manual";
-        const busyTimer = skipBusyTimer || isManual
+        const busyTimer = isManual
           ? null
           : matched
           ? setTimeout(() => {
@@ -785,10 +809,22 @@
                 setFinalText(loadingEl, "AI 思考时间较长，请耐心等待");
               }
             }, 10000)
+          : emailProvided
+          ? setTimeout(() => {
+              if (!answered) {
+                followUpEl = addMessage("", "bot");
+                // 客户提交转人工时已经一并留了邮箱，前一条消息已经确认过"已将您的问题
+                // 更新给人工客服"，这里不重复那句话，只补充说明客服会用哪个邮箱回复。
+                const confirmText = email
+                  ? `请耐心等待客服通过邮箱【${email}】回复您～`
+                  : "请耐心等待客服通过邮箱回复您～";
+                setFinalText(followUpEl, confirmText);
+              }
+            }, 10000)
           : setTimeout(() => {
               if (!answered) {
                 followUpEl = addMessage("", "bot");
-                renderLeaveEmailPrompt(followUpEl, conversationId);
+                renderLeaveEmailPrompt(followUpEl, conversationId, question);
               }
             }, 10000);
 
@@ -846,7 +882,7 @@
               data.matched ? "AI 正在思考您的问题，请稍候..." : "已收到您的问题，正在为您转接人工客服，请稍候"
             );
             // 同上，不 await，避免发送按钮被长时间轮询锁死。
-            pollAnswer(data.conversation_id, loading, data.matched, false, data.mode).catch(() => {});
+            pollAnswer(data.conversation_id, loading, data.matched, data.mode, { question: text }).catch(() => {});
           }
         } catch (err) {
           setFinalText(loading, `出错了：${err.message}`);

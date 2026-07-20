@@ -430,15 +430,17 @@ def _smtp_overrides() -> dict:
 
 
 async def _notify_customer_email_left(
-    conversation_id: int, product: str, question: str, mode: str, customer_email: str
+    conversation_id: int, product: str, question: str, mode: str, customer_email: str, visitor_no: int = 0
 ) -> None:
     """客户在"人工客服正忙"提示下主动留下了邮箱：额外发一封邮件告知客服，
     客服可直接通过该邮箱回复客户，而不必等客户重新打开网页查看。
     客户不留邮箱则此函数完全不会被调用，不会触发任何邮件。"""
     product_label = PRODUCTS.get(product, {}).get("label", product or "未知产品")
     mode_label = MODE_LABELS.get(mode, mode)
-    subject = f"【{BRAND_NAME} 客服提醒】客户留下邮箱待人工回复（对话 #{conversation_id}）"
+    visitor_label = f"访客{visitor_no}" if visitor_no else "未知访客"
+    subject = f"【{BRAND_NAME} 客服提醒】{visitor_label}留下邮箱待人工回复（对话 #{conversation_id}）"
     body = (
+        f"客户：{visitor_label}（跟客服工作台会话列表里的编号一致，方便直接定位到对应对话）\n"
         f"产品：{product_label}\n"
         f"工作模式：{mode_label}\n"
         f"客户提问：{question}\n"
@@ -480,11 +482,14 @@ async def _reminder_loop() -> None:
             if queue:
                 customer_count = len({item["session_id"] for item in queue})
                 question_count = len(queue)
+                visitor_no_map = database.get_visitor_no_map()
                 subject = f"【{BRAND_NAME} 客服定时提醒】当前有 {customer_count} 位客户、{question_count} 个问题待处理"
                 lines = [subject, ""]
                 for item in queue:
                     label = PRODUCTS.get(item["product"], {}).get("label", item["product"] or "未知产品")
-                    lines.append(f"- 对话 #{item['id']}（{label}）：{item['question']}")
+                    visitor_no = visitor_no_map.get(item["session_id"], 0)
+                    visitor_label = f"访客{visitor_no}" if visitor_no else "未知访客"
+                    lines.append(f"- 对话 #{item['id']}（{visitor_label} · {label}）：{item['question']}")
                 await asyncio.to_thread(
                     send_email, subject, "\n".join(lines), _notify_recipient(), **_smtp_overrides()
                 )
@@ -818,8 +823,10 @@ def list_customer_session_history(session_id: str) -> dict:
     """客户端刷新页面时用来恢复聊天记录：session_id 相当于客户浏览器里的私有令牌（存
     在 sessionStorage，随标签页关闭而清除，刷新页面时还在），知道它才能查到对应记录，
     安全性与 /api/ask 现有的会话机制一致。这里只返回客户自己该看到的字段（问题、最终
-    回复、状态、模式、题库是否命中），不暴露 AI 建议草稿、题库匹配详情、客户 IP 等
-    客服工作台专用信息。"""
+    回复、状态、模式、题库是否命中、客户自己留的邮箱），不暴露 AI 建议草稿、题库匹配
+    详情、客户 IP 等客服工作台专用信息。客户本来就知道自己留的邮箱是什么，直接把邮箱
+    原文返回给前端，方便刷新页面后继续显示"客服稍后通过邮件 xxx 回复您"这类带具体邮箱
+    的提示文案，不算泄露额外信息。"""
     items = database.list_session_messages(session_id)
     return {
         "items": [
@@ -830,6 +837,8 @@ def list_customer_session_history(session_id: str) -> dict:
                 "status": item["status"],
                 "mode_used": item["mode_used"],
                 "matched": bool(item["matched"]),
+                "has_email": bool(item["customer_email"]),
+                "email": item["customer_email"] or None,
             }
             for item in items
         ]
@@ -874,6 +883,7 @@ async def leave_customer_email(conversation_id: int, req: LeaveEmailRequest) -> 
                 conversation["question"],
                 conversation["mode_used"],
                 email,
+                database.get_visitor_no(conversation["session_id"]),
             )
         )
     return {"success": True}
@@ -910,7 +920,12 @@ async def submit_transfer_question(conversation_id: int, req: TransferQuestionRe
     if email and conversation["mode_used"] != "manual":
         asyncio.create_task(
             _notify_customer_email_left(
-                conversation_id, conversation["product"], question, conversation["mode_used"], email
+                conversation_id,
+                conversation["product"],
+                question,
+                conversation["mode_used"],
+                email,
+                database.get_visitor_no(conversation["session_id"]),
             )
         )
     return {"success": True}

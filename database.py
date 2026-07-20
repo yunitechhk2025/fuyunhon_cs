@@ -297,15 +297,28 @@ def list_recent(limit: int = 50) -> list:
         return [dict(r) for r in rows]
 
 
+def get_visitor_no_map() -> dict:
+    """按 session_id 首次提问时间的先后顺序，给每个会话算出一个稳定的"访客编号"（1、2、3...），
+    跟工作台会话列表里看到的编号是同一套规则，供邮件通知等场景批量查询"是哪个客户"。"""
+    with get_conn() as conn:
+        order_rows = conn.execute(
+            "SELECT session_id, MIN(id) AS first_id FROM conversations GROUP BY session_id ORDER BY first_id ASC"
+        ).fetchall()
+        return {row["session_id"]: idx + 1 for idx, row in enumerate(order_rows)}
+
+
+def get_visitor_no(session_id: str) -> int:
+    """单个会话查访客编号（内部复用 get_visitor_no_map，找不到时返回 0），
+    用于邮件通知里标明"是哪个客户"。"""
+    return get_visitor_no_map().get(session_id, 0)
+
+
 def list_sessions(limit: int = 200) -> list:
     """按客户会话（session_id）分组汇总，客服工作台以此实现"一个用户一个对话框"。
     IP 和 session_id 都不适合直接展示给客服（IP 可能拿不到/意义不明，session_id 是随机字符串），
     因此额外分配一个稳定的"访客编号"（按首次提问时间先后顺序，1、2、3...），作为对客服友好的身份标识。"""
     with get_conn() as conn:
-        order_rows = conn.execute(
-            "SELECT session_id, MIN(id) AS first_id FROM conversations GROUP BY session_id ORDER BY first_id ASC"
-        ).fetchall()
-        visitor_no_map = {row["session_id"]: idx + 1 for idx, row in enumerate(order_rows)}
+        visitor_no_map = get_visitor_no_map()
 
         rows = conn.execute(
             """

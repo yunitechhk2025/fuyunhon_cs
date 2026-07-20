@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
@@ -209,22 +210,32 @@ class ExcelFaqRagBot:
         self.item_embeddings = None
 
     def _semantic_scores(
-        self, user_query: str, base_url: Optional[str] = None, api_key: Optional[str] = None
+        self, user_query: str, base_url: Optional[str] = None, api_key: Optional[str] = None, attempts: int = 2
     ) -> Optional[np.ndarray]:
+        """实时调 embedding 接口算语义相似度：偶尔会因网络抖动/超时/限流失败，失败后会静默降级
+        成纯关键词检索——对于跟题库问题字面重合很少、全靠语义才能命中的口语化问题（比如"小孩能用嘛"
+        vs 题库里的"适用年龄？"），关键词分数往往很低，一旦这次语义调用失败就会从"命中"变成"未命中"，
+        导致同一个问题连续问两次却出现不一样的识别结果。这里加一次快速重试，尽量把这种偶发失败盖住，
+        而不是第一次失败就直接放弃退化。"""
         if self.item_embeddings is None:
             return None
-        try:
-            client = self._get_ai_client(base_url=base_url, api_key=api_key)
-            resp = client.embeddings.create(model=self.embed_model, input=[user_query])
-            q_vec = np.array(resp.data[0].embedding, dtype="float32")
-            norm = np.linalg.norm(q_vec)
-            if norm == 0:
-                return None
-            q_vec = q_vec / norm
-            return self.item_embeddings @ q_vec
-        except Exception as exc:  # noqa: BLE001
-            print(f"[warn] 语义检索调用失败，本次仅使用关键词检索: {exc}", file=sys.stderr)
-            return None
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
+            try:
+                client = self._get_ai_client(base_url=base_url, api_key=api_key)
+                resp = client.embeddings.create(model=self.embed_model, input=[user_query])
+                q_vec = np.array(resp.data[0].embedding, dtype="float32")
+                norm = np.linalg.norm(q_vec)
+                if norm == 0:
+                    return None
+                q_vec = q_vec / norm
+                return self.item_embeddings @ q_vec
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt < attempts:
+                    time.sleep(0.3)
+        print(f"[warn] 语义检索调用失败（已重试{attempts}次），本次仅使用关键词检索: {last_exc}", file=sys.stderr)
+        return None
 
     def retrieve(
         self, user_query: str, base_url: Optional[str] = None, api_key: Optional[str] = None
