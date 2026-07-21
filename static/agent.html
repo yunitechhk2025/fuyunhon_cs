@@ -298,11 +298,13 @@
         border: 2px solid #fff;
       }
 
+      /* 头像颜色不再按"待处理/已回复"状态变色（那个状态已经用文字徽章 + 未处理红点表示了，
+         头像本身颜色忽好忽坏反而显得杂乱）：统一用一个素色，只作为访客编号的底色。 */
       .conv-avatar {
         width: 38px;
         height: 38px;
         border-radius: 50%;
-        background: #cfd8ea;
+        background: #9aa5ba;
         color: #fff;
         display: flex;
         align-items: center;
@@ -313,14 +315,6 @@
         padding: 0 2px;
         overflow: hidden;
         box-shadow: 0 2px 5px rgba(20, 30, 60, 0.12);
-      }
-
-      .conv-avatar.pending {
-        background: linear-gradient(135deg, #ffb020, #ff8a3d);
-      }
-
-      .conv-avatar.answered {
-        background: linear-gradient(135deg, #23b8bc, #1a7d3a);
       }
 
       .conv-main {
@@ -1627,11 +1621,6 @@
 
       // ---------------- 会话列表（按用户 session_id 分组，一个用户一个对话框） ----------------
 
-      function avatarClassFor(session) {
-        if (session.pending_count > 0) return "pending";
-        return "answered";
-      }
-
       function visitorLabel(session) {
         return session.visitor_no ? `访客${session.visitor_no}` : "访客";
       }
@@ -1678,7 +1667,7 @@
             return `
               <div class="conv-item ${active}" data-session-id="${escapeHtml(session.session_id)}">
                 <div class="conv-avatar-wrap">
-                  <div class="conv-avatar ${avatarClassFor(session)}">${escapeHtml(avatarLabel(session))}</div>
+                  <div class="conv-avatar">${escapeHtml(avatarLabel(session))}</div>
                   ${session.pending_count > 0 ? '<span class="unread-dot"></span>' : ""}
                 </div>
                 <div class="conv-main">
