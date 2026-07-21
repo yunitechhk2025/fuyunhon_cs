@@ -9,6 +9,10 @@
         box-sizing: border-box;
       }
 
+      /* 主色/辅色跟随官网 https://www.fuyunhon.com/ 的品牌配色：
+         #009c84（主色，青绿）、#23b8bc（辅色，青蓝，多用于渐变/边框搭配主色）。
+         徽章里表示状态含义的颜色（成功绿/待处理橙/人工红/产品紫/邮箱蓝等）保持不变，
+         只替换原来跟品牌无关、单纯当作 UI 主色使用的蓝色。 */
       html,
       body {
         margin: 0;
@@ -50,7 +54,7 @@
       .login-card h2 {
         margin: 0 0 20px;
         text-align: center;
-        color: #2f6fed;
+        color: #009c84;
       }
 
       .login-card input {
@@ -64,7 +68,7 @@
       }
 
       .login-card input:focus {
-        border-color: #2f6fed;
+        border-color: #009c84;
       }
 
       .login-card button {
@@ -72,7 +76,7 @@
         padding: 12px;
         border: 0;
         border-radius: 10px;
-        background: #2f6fed;
+        background: #009c84;
         color: #fff;
         font-size: 15px;
         cursor: pointer;
@@ -97,7 +101,7 @@
         align-items: center;
         justify-content: space-between;
         padding: 12px 24px;
-        background: linear-gradient(135deg, #2f6fed, #25b8a8);
+        background: linear-gradient(135deg, #009c84, #23b8bc);
         color: #fff;
         flex-shrink: 0;
       }
@@ -131,8 +135,8 @@
       .mobile-back-btn {
         display: none;
         border: 0;
-        background: #eef1f7;
-        color: #2f6fed;
+        background: #e3f5f1;
+        color: #009c84;
         padding: 6px 12px;
         border-radius: 8px;
         font-size: 13px;
@@ -165,7 +169,7 @@
 
       .mode-switch-btn.active {
         background: #fff;
-        color: #2f6fed;
+        color: #009c84;
         font-weight: 700;
       }
 
@@ -225,7 +229,7 @@
       }
 
       .filter-tab.active {
-        background: #2f6fed;
+        background: #009c84;
         color: #fff;
       }
 
@@ -255,7 +259,7 @@
       }
 
       .conv-item.active {
-        background: #eef3ff;
+        background: #e3f5f1;
       }
 
       .conv-avatar {
@@ -280,7 +284,7 @@
       }
 
       .conv-avatar.answered {
-        background: linear-gradient(135deg, #25b8a8, #1a7d3a);
+        background: linear-gradient(135deg, #23b8bc, #1a7d3a);
       }
 
       .conv-main {
@@ -342,8 +346,8 @@
       }
 
       .badge.collab {
-        background: #eaf1ff;
-        color: #2f6fed;
+        background: #e3f5f1;
+        color: #009c84;
       }
 
       .badge.pending {
@@ -456,7 +460,7 @@
       }
 
       .bubble-avatar.agent {
-        background: linear-gradient(135deg, #2f6fed, #25b8a8);
+        background: linear-gradient(135deg, #009c84, #23b8bc);
       }
 
       .bubble {
@@ -477,7 +481,7 @@
       }
 
       .bubble.agent {
-        background: linear-gradient(135deg, #2f6fed, #4a80f0);
+        background: linear-gradient(135deg, #009c84, #23b8bc);
         color: #fff;
         border-top-right-radius: 4px;
       }
@@ -526,8 +530,8 @@
       }
 
       .intent-badge.hit {
-        background: #eef4ff;
-        color: #2f6fed;
+        background: #e3f5f1;
+        color: #009c84;
       }
 
       .intent-badge.miss {
@@ -568,7 +572,7 @@
 
       .draft-box {
         background: #f0f7f5;
-        border: 1.5px dashed #25b8a8;
+        border: 1.5px dashed #23b8bc;
         border-radius: 12px;
         padding: 10px 12px;
       }
@@ -643,7 +647,7 @@
       }
 
       .compose-area textarea:focus {
-        border-color: #2f6fed;
+        border-color: #009c84;
       }
 
       .compose-actions {
@@ -661,7 +665,7 @@
       }
 
       .btn-primary {
-        background: #2f6fed;
+        background: #009c84;
         color: #fff;
       }
 
@@ -1034,10 +1038,11 @@
           <h4>无关闲聊自动过滤（AI 判断）</h4>
           <p style="font-size: 12px; color: #94a1b8; margin: 0 0 10px; line-height: 1.6;">
             开启后，AI 会先判断客户消息是否与产品咨询完全无关（纯闲聊寒暄，或荒谬/挑衅性提问，如
-            "吃饭了吗""明天是不是要下雨"）；只有非常确信无关时才会直接回复引导语，不转
-            人工、不发邮件、不进队列，模糊情况仍按正常问题处理。涉及低俗/不道德/国家安全/政治
-            敏感/违禁内容等严肃或敏感提问不会被当成无关闲聊过滤掉，会正常转人工处理。如遇误判，
-            可随时关闭，退回"全部按正常问题处理"。
+            "吃饭了吗""这产品对国家安全有危害吗"），只有非常确信无关时才会直接回复引导语，不转
+            人工、不发邮件、不进队列，模糊情况仍按正常问题处理；低俗/色情/脏话骂人、明显违法违规、
+            涉及政治敏感/国家安全等违禁内容的提问，命中就一律按无关闲聊处理（不享受"模糊情况从宽"
+            的待遇），同样不会转人工、不发邮件。主动说"转人工"后补充的具体问题也会过一遍这层判断。
+            如遇误判，可随时关闭，退回"全部按正常问题处理"。
           </p>
           <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
             <button class="btn" id="irrelevant-toggle-btn">加载中...</button>
