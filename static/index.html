@@ -770,7 +770,7 @@
             } else {
               // 没留邮箱：先确认已经把具体问题更新给客服；如果等太久（>10秒）客服仍未回复，
               // 会像常规流程一样在下面新增一条"人工客服正忙，留邮箱"的提示。
-              setFinalText(followUp, `已将你的问题「${question}」更新给人工客服。`);
+              setFinalText(followUp, `已将你的问题「${question}」更新给人工客服，请稍候`);
               updateBubbleRecord(followUp, { kind: "waiting", conversation_id: conversationId });
               pollAnswer(conversationId, followUp, false, mode, { question, emailProvided: false }).catch(() => {});
             }
@@ -1018,7 +1018,7 @@
             const initialText = item.is_explicit_transfer
               ? item.email
                 ? `已将您的问题「${item.question}」更新给人工客服，请耐心等待客服回复您～`
-                : `已将你的问题「${item.question}」更新给人工客服。`
+                : `已将你的问题「${item.question}」更新给人工客服，请稍候`
               : item.matched
               ? "AI 正在思考您的问题，请稍候..."
               : "已收到您的问题，正在为您转接人工客服，请稍候";
