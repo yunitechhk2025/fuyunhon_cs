@@ -569,6 +569,11 @@
         color: #b8860b;
       }
 
+      .intent-badge.skip {
+        background: #eef1f7;
+        color: #5c6579;
+      }
+
       .intent-card {
         background: #fff;
         border: 1px solid #e6eaf2;
@@ -1717,7 +1722,29 @@
       // badgesHtml（产品/模式/状态/邮箱徽章）紧跟在"AI 识别"标签正下方展示，而不是像之前那样
       // 挪到题库检索结果卡片下面——这样一进入这条消息就能同时看到"AI 判断结果"和"这条消息的
       // 基本属性"，不需要往下翻。
+      // 后端有两类"伪命中"：单纯打招呼、无关闲聊/低俗违规内容，为了统计口径（不算题库未命中、
+      // 不进转人工队列）复用了跟真实命中一样的 matched=1、match_score=1.0，但 matched_question
+      // 存的是这两个固定的占位字符串，不是真的题库问题。如果照搬"命中相关资料"的样式来展示，
+      // 客服会看到"命中相关资料（匹配度100%）"+"无关闲聊/非常规提问"这种自相矛盾的显示（比如
+      // "吃了吗"被展示成 100% 命中了一条叫"无关闲聊/非常规提问"的题库资料），容易误导客服以为
+      // AI 真的从题库里查到了内容。这里按 matched_question 是否是这两个占位字符串，单独分支出
+      // 一种"已自动处理，非真实命中"的展示样式，跟真实命中区分开。
+      const SKIP_LABELS = {
+        问候语: "💬 AI 识别：日常问候，已自动回复",
+        "无关闲聊/非常规提问": "🚫 AI 识别：无关闲聊/非常规内容，已自动过滤",
+      };
+
       function renderIntentBlock(item, missHint, badgesHtml) {
+        if (item.matched === 1 && SKIP_LABELS[item.matched_question]) {
+          return `
+            <div class="intent-wrap">
+              <span class="intent-badge skip">${SKIP_LABELS[item.matched_question]}</span>
+              <div class="msg-badges">${badgesHtml}</div>
+              <div class="intent-card">
+                <div>${escapeHtml(item.matched_answer || "")}</div>
+              </div>
+            </div>`;
+        }
         if (item.matched === 1) {
           const scoreText = typeof item.match_score === "number" ? `${(item.match_score * 100).toFixed(0)}%` : "-";
           return `
