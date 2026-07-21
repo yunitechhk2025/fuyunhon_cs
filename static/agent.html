@@ -1687,7 +1687,7 @@
                     <span class="conv-time">${formatBeijingTime(session.last_activity)}</span>
                   </div>
                   <div class="conv-question">${escapeHtml(session.last_question || "")}</div>
-                  <div class="conv-badges"><span class="badge product">📦 ${escapeHtml(productLabel(session.last_product))}</span><span class="badge neutral">共${session.message_count}条</span>${sessionStatusBadge(session)}</div>
+                  <div class="conv-badges"><span class="badge neutral">共${session.message_count}条</span>${sessionStatusBadge(session)}</div>
                 </div>
               </div>`;
           })
