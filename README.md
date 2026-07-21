@@ -75,15 +75,17 @@
 
 `static/index.html` 用 `sessionStorage`（不是 `localStorage`）保存客户浏览器的会话标识 `fuyunhon_session_id`——`sessionStorage` 的生命周期跟"标签页"绑定：刷新页面（F5）不会清空，关闭标签页/浏览器窗口才会清空。借着这个特性：
 
-- **刷新页面**：`sessionStorage` 里的会话 id 还在，页面加载时会调用 `GET /api/conversations/by-session/{session_id}`（只返回客户自己该看到的字段：问题、最终回复、状态、模式、题库命中情况、是否已留邮箱 `has_email`、邮箱原文 `email`、是否还在等待补充问题 `awaiting_transfer_details`、是否为主动转人工 `is_explicit_transfer`，不含 AI 建议草稿、题库匹配详情、客户 IP 等客服专用信息——客户自己留的邮箱原样返回给自己不算泄露）把历史问答重新渲染成消息气泡；如果最后一条问题还没有最终回复，会恢复出对应的等待提示文案并接回 `pollAnswer(..., { question, emailProvided: item.has_email, email: item.email })` 继续轮询，避免刷新后又重复弹一次"留邮箱"提示，也能在带具体邮箱的确认文案里正确回显。
+- **刷新页面**：`sessionStorage` 里的会话 id 还在，页面加载时按下述"逐条重放"机制恢复出跟刷新前完全一致的聊天记录。
 - **关闭标签页/浏览器**：`sessionStorage` 被清空，下次打开是全新的会话 id，不会带着之前的聊天记录，工作台里也会被当成一个新的"访客编号"（`database.list_sessions` 按 `session_id` 首次提问时间分配编号）。
-- **主动"转人工"但还没提交补充问题表单就刷新了页面**：这条对话的 `question` 字段目前还是"转人工"这句占位文本，如果按未命中题库的规则去恢复，会永久卡在一句不会再变的"已收到您的问题，正在为您转接人工客服，请稍候"，客户就没法再补充真正想问的内容了——这是刷新会改变客户端行为的一个真实 bug。修复方式：数据库给 `conversations` 表加了一列 `awaiting_transfer_details`（`is_explicit_transfer` 分支创建对话后置为 1；`/transfer-question` 提交时 `database.set_question` 会自动清成 0），`restoreHistory()` 读到这个字段为真时，不走 `pollAnswer`，而是重新调用 `renderTransferQuestionPrompt(...)`，弹出跟第一次一模一样的"请描述您的问题"输入框，让客户能接着把流程走完。
-- **一条对话已经等了超过 10 秒（该出现"人工客服正忙"提示了）时刷新页面**：修复前 `pollAnswer` 的 `busyTimer` 一律固定等 10000ms，每次刷新都是从 0 重新数，导致客户明明已经等过、该看到的提示却像是"倒退"了一样要重新等一遍才出现。现在 `/api/conversations/by-session/{session_id}` 额外返回 `created_at`（服务端记录的真实提问时间，UTC），`restoreHistory()` 用 `elapsedMsSince(item.created_at)` 算出这条对话已经等了多久，传给 `pollAnswer(..., { elapsedMs })`；`pollAnswer` 内部把固定的 `10000` 改成 `remainingMs = Math.max(0, 10000 - elapsedMs)`——已经等超过 10 秒的会直接展示对应提示（`setTimeout(..., 0)` 相当于立即执行），还没到 10 秒的只等剩余时间，不会重新从 10 秒开始数。全新提问（未传 `elapsedMs`）时 `elapsedMs` 默认 0，行为跟之前完全一样。
-- **刷新时同时恢复多条待处理对话，各自的"人工客服正忙"提示挤在一起、跟自己的提问脱节**：根因是 `pollAnswer` 的 `busyTimer` 触发后一直用 `addMessage(...)`（无条件 `appendChild` 到 `#messages` 容器最末尾）来插入新的提示气泡；刷新恢复历史时，多条对话的 `remainingMs` 大多是 0（早就该出现提示了），它们的 `setTimeout` 几乎在同一时刻触发，而此时 `forEach` 循环已经把全部对话的"问题 + 已收到您的问题"气泡都同步添加完了——所以这些异步补上的提示会全部堆在最后一条气泡后面，跟各自真正对应的提问完全脱节，看起来次序很乱。修复：新增 `addMessageAfter(afterEl, text, role)`，用 `afterEl.insertAdjacentElement("afterend", el)` 把新气泡固定插在指定元素后面而不是容器末尾；`pollAnswer` 里所有原来 `addMessage("", "bot")` 创建 `followUpEl`/客服回复气泡的地方都改成 `addMessageAfter(loadingEl, "", "bot")`，保证不管有多少条对话同时到期，各自的提示都紧跟在自己那条"已收到您的问题"气泡后面。
-- **客户之前留过的邮箱，刷新页面后气泡"消失了"**：实时聊天时客户留的邮箱会单独显示成一条 `📧 邮箱地址` 消息，但 `restoreHistory()` 只重建了 `item.question` 对应的气泡，没有重建这条邮箱气泡（后端一直有正常保存并通过 `item.email` 返回，只是前端没画出来）。修复：`restoreHistory()` 在添加问题气泡后，若 `item.email` 存在则紧接着补一条 `📧 ${item.email}` 的客户气泡，跟实时聊天时的展示保持一致。
-- **主动"转人工"补充问题后，刷新页面确认文案变成了另一套话术**：客户主动说"转人工"并补充具体问题后，实时看到的确认语是"已将您的问题「具体问题」更新给人工客服…"；但 `restoreHistory()` 之前无法区分"这条对话是主动转人工，还是题库未命中被动转人工"，一律恢复成被动转人工的话术"已收到您的问题，正在为您转接人工客服，请稍候"，跟客户当时实际看到的不一样。修复：数据库给 `conversations` 表新增一列 `is_explicit_transfer`（`INTEGER DEFAULT 0`）——跟 `awaiting_transfer_details` 不同，客户提交补充问题后这个标记**不会**被清零，永久记住这条对话最初的来源；`is_explicit_transfer` 分支创建对话时置为 1（`database.set_is_explicit_transfer`），`/by-session` 接口把它一并返回给前端。`restoreHistory()` 现在按 `item.is_explicit_transfer` 选择正确的确认语：为真时，按 `item.email` 是否存在还原出`已将您的问题「X」更新给人工客服，请耐心等待客服回复您～`（已留邮箱）或 `已将你的问题「X」更新给人工客服。`（未留邮箱）；为假时才恢复成原来的"已收到您的问题…"话术，跟被动转人工场景保持一致。
 
-无关闲聊/荒谬提问（`_classify_irrelevant` 命中的情况）现在也会完整落库、正常返回真实的 `conversation_id`，因此刷新页面时同样会出现在恢复的历史记录里，跟其他正常问答一样。
+**刷新恢复 = 聊天记录逐条重放（治本机制）**：早期版本的刷新恢复靠 `conversations` 表每条对话的"最终状态"去推演出一份近似的聊天记录，为此陆续打过多个补丁（`awaiting_transfer_details` 记住未提交的转人工表单、`created_at`/`elapsedMs` 续算 10 秒倒计时、`addMessageAfter` 保持提示插入顺序、补画邮箱气泡、`is_explicit_transfer` 区分主动/被动转人工话术），但转人工这类多步流程的过程性消息（引导语、第一次确认、"人工客服正忙"原始提示等）在推演中天然丢失或措辞对不上，刷新后看起来像"换了一个界面"。现在改为逐条落库、逐条重放：
+
+- **落库**：新增 `chat_messages` 明细表（`database.py`），客户端每显示一条消息气泡就调 `POST /api/chat-messages` 记一行，DOM 里的每个气泡对应明细表里的一行；等待类气泡"先占位、后原地更新"（"AI 正在思考…"最终被答案替换时，通过 `POST /api/chat-messages/{id}/update` 原地更新同一行）。`sort_key`（REAL）是排序键：`addMessageAfter` 插入的延迟提示带 `after_id`，服务端取前后两条消息 sort_key 的中间值，保证明细顺序跟 DOM 顺序一致。落库请求在前端通过一个串行 Promise 队列（`recordQueue`）按显示顺序依次发出；单条失败静默忽略，只影响那一条的恢复。
+- **气泡类型（kind）**：`text`（普通文字）/ `waiting`（等待中，同时是这条对话的轮询锚点）/ `transfer_form`（"请描述您的问题"表单）/ `email_form`（"人工客服正忙，留邮箱"表单）/ `busy_note`（已留邮箱场景下的"客服正忙，已邮件通知"提示）。
+- **重放**（`replayChatMessages`）：`GET /api/chat-messages/by-session/{session_id}` 拉明细 + `GET /api/conversations/by-session/{session_id}` 拉对话状态，按顺序逐条渲染。只有两类气泡会复活成可交互状态：① 还没提交的表单（`transfer_form` 且 `awaiting_transfer_details=1`、`email_form` 且未留邮箱未回复）重新渲染成表单；② 还没等到回复的 `waiting` 气泡接回 `pollAnswer`（`elapsedMs` 按真实提问时间续算；明细里已有 `busy_note`/`email_form` 时传 `skipBusy: true` 不再重复补提示；复活的邮箱表单作为 `followUpEl` 传入，最终答案照旧写进那个气泡）。其余一律按静态文字原样展示，重放期间 `recordingEnabled=false`，不会把恢复出来的气泡再记一遍。
+- **老会话兜底**：明细表为空（逐条落库功能上线前就开始的会话）时退回旧的推演式恢复（`restoreHistoryFromConversations`），推演产生的气泡照常落库，之后再刷新就走逐条重放。
+
+无关闲聊/荒谬提问（`_classify_irrelevant` 命中的情况）也会完整落库、正常返回真实的 `conversation_id`，因此刷新页面时同样会出现在恢复的历史记录里，跟其他正常问答一样。
 
 ### 客服工作台：回复框显示规则 / 草稿保存
 

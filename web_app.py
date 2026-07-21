@@ -120,6 +120,27 @@ class IrrelevantFilterSettingsRequest(BaseModel):
     enabled: bool
 
 
+class ChatMessageCreateRequest(BaseModel):
+    # 客户端每显示一条消息气泡就调一次这个接口落库，刷新页面时按原样逐条重放（见
+    # /api/chat-messages 两个端点的说明）。after_id 对应前端的 addMessageAfter：延迟出现
+    # 的提示（如 10 秒后的"人工客服正忙"）要插在自己所属提问后面，不是排到最末尾。
+    session_id: str
+    role: str
+    content: str = ""
+    kind: str = "text"
+    conversation_id: Optional[int] = None
+    after_id: Optional[int] = None
+
+
+class ChatMessageUpdateRequest(BaseModel):
+    # 等待类气泡是"先占位、后原地更新"的（"AI 正在思考…"最终被答案替换），DOM 里同一个
+    # 气泡始终对应同一行记录；session_id 用来保证只能改到自己会话里的消息。
+    session_id: str
+    content: Optional[str] = None
+    kind: Optional[str] = None
+    conversation_id: Optional[int] = None
+
+
 class SmtpSettingsRequest(BaseModel):
     host: str
     port: int = 587
@@ -887,6 +908,48 @@ def list_customer_session_history(session_id: str) -> dict:
             for item in items
         ]
     }
+
+
+@app.post("/api/chat-messages")
+def create_chat_message(req: ChatMessageCreateRequest) -> dict:
+    """客户端聊天记录逐条落库：客户端每显示一条消息气泡（客户的提问、AI/客服的回复、
+    各种过程性提示）就调一次这个接口。conversations 表每条对话只存一行最终状态，光靠它
+    没法在刷新后原样还原出转人工这类多步流程的全部过程消息（引导语、"人工客服正忙"提示、
+    第一次确认语等都会丢失或措辞对不上）；有了这份明细，刷新页面就是简单的逐条重放，
+    跟刷新前看到的完全一致。session_id 是客户浏览器里的私有令牌，安全模型与
+    /api/conversations/by-session 一致。"""
+    role = req.role if req.role in ("user", "bot") else "bot"
+    kind = req.kind if req.kind in ("text", "waiting", "transfer_form", "email_form", "busy_note") else "text"
+    message_id = database.add_chat_message(
+        session_id=req.session_id,
+        role=role,
+        content=(req.content or "")[:4000],
+        kind=kind,
+        conversation_id=req.conversation_id,
+        after_id=req.after_id,
+    )
+    return {"id": message_id}
+
+
+@app.post("/api/chat-messages/{message_id}/update")
+def update_chat_message(message_id: int, req: ChatMessageUpdateRequest) -> dict:
+    """更新一条已落库的消息气泡（内容/类型/所属对话）。等待类气泡"先占位、后原地更新"：
+    "AI 正在思考…"最终会被答案原地替换，DOM 里同一个气泡对应明细表里同一行。"""
+    kind = req.kind if req.kind in (None, "text", "waiting", "transfer_form", "email_form", "busy_note") else None
+    database.update_chat_message(
+        message_id=message_id,
+        session_id=req.session_id,
+        content=(req.content or "")[:4000] if req.content is not None else None,
+        kind=kind,
+        conversation_id=req.conversation_id,
+    )
+    return {"success": True}
+
+
+@app.get("/api/chat-messages/by-session/{session_id}")
+def list_chat_messages_by_session(session_id: str) -> dict:
+    """客户端刷新页面时拉取本会话的全部消息明细，按显示顺序逐条重放。"""
+    return {"items": database.list_chat_messages(session_id)}
 
 
 @app.get("/api/conversations/{conversation_id}")

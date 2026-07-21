@@ -67,8 +67,28 @@ def init_db() -> None:
                 value TEXT NOT NULL
             );
 
+            -- 客户端聊天记录明细：客户端每显示一条消息气泡就落库一行，刷新页面时按原样
+            -- 逐条重放。conversations 表每条对话只存一行"最终状态"（最终的问题、最终留的
+            -- 邮箱等），刷新恢复时如果只靠它"推演"聊天记录，转人工这类多步流程的过程性
+            -- 消息（"好的，请您简单描述…"、"人工客服正忙，留下你的邮箱…"等）就会丢失或者
+            -- 措辞对不上，看起来像换了一个界面。sort_key 是排序键（不用自增 id 排序，因为
+            -- "人工客服正忙"这类提示是延迟插在自己所属提问后面的，落库时间晚于排在它后面
+            -- 的消息）；kind 标记气泡类型，刷新重放时据此决定渲染成静态文字还是重新挂上
+            -- 可交互的表单/轮询（见 static/index.html 的 restoreHistory）。
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                conversation_id INTEGER,
+                role TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'text',
+                content TEXT NOT NULL DEFAULT '',
+                sort_key REAL NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_conversations_status ON conversations(status);
             CREATE INDEX IF NOT EXISTS idx_conversations_session ON conversations(session_id);
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, sort_key);
             """
         )
 
@@ -440,6 +460,92 @@ def list_session_messages(session_id: str) -> list:
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM conversations WHERE session_id = ? ORDER BY id ASC",
+            (session_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ---------------- 客户端聊天记录明细（刷新后逐条重放） ----------------
+
+
+def add_chat_message(
+    session_id: str,
+    role: str,
+    content: str,
+    kind: str = "text",
+    conversation_id: Optional[int] = None,
+    after_id: Optional[int] = None,
+) -> int:
+    """落库一条客户端消息气泡。after_id 指定"插在某条已有消息后面"（对应前端的
+    addMessageAfter——"人工客服正忙"这类延迟出现的提示要插在自己所属提问的下面，而不是
+    永远排到最末尾），此时排序键取前后两条消息 sort_key 的中间值；不指定则排在会话最后。"""
+    with get_conn() as conn:
+        sort_key = None
+        if after_id is not None:
+            after_row = conn.execute(
+                "SELECT sort_key FROM chat_messages WHERE id = ? AND session_id = ?",
+                (after_id, session_id),
+            ).fetchone()
+            if after_row is not None:
+                after_key = after_row["sort_key"]
+                next_row = conn.execute(
+                    "SELECT MIN(sort_key) AS k FROM chat_messages WHERE session_id = ? AND sort_key > ?",
+                    (session_id, after_key),
+                ).fetchone()
+                sort_key = (after_key + next_row["k"]) / 2 if next_row and next_row["k"] is not None else after_key + 1
+        if sort_key is None:
+            max_row = conn.execute(
+                "SELECT COALESCE(MAX(sort_key), 0) AS k FROM chat_messages WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            sort_key = max_row["k"] + 1
+        cursor = conn.execute(
+            """
+            INSERT INTO chat_messages (session_id, conversation_id, role, kind, content, sort_key)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (session_id, conversation_id, role, kind, content, sort_key),
+        )
+        return cursor.lastrowid
+
+
+def update_chat_message(
+    message_id: int,
+    session_id: str,
+    content: Optional[str] = None,
+    kind: Optional[str] = None,
+    conversation_id: Optional[int] = None,
+) -> None:
+    """更新一条消息气泡的内容/类型/所属对话。客户端的等待气泡是"先占位、后更新"的
+    （比如"AI 正在思考…"最终被答案原地替换），DOM 里同一个气泡对应这里同一行记录。
+    带 session_id 条件是为了保证只能改到自己会话里的消息。"""
+    sets = []
+    params: list = []
+    if content is not None:
+        sets.append("content = ?")
+        params.append(content)
+    if kind is not None:
+        sets.append("kind = ?")
+        params.append(kind)
+    if conversation_id is not None:
+        sets.append("conversation_id = ?")
+        params.append(conversation_id)
+    if not sets:
+        return
+    params.extend([message_id, session_id])
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE chat_messages SET {', '.join(sets)} WHERE id = ? AND session_id = ?",
+            params,
+        )
+
+
+def list_chat_messages(session_id: str) -> list:
+    """按显示顺序返回某个会话的全部消息气泡，供客户端刷新页面时逐条重放。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, conversation_id, role, kind, content FROM chat_messages "
+            "WHERE session_id = ? ORDER BY sort_key ASC, id ASC",
             (session_id,),
         ).fetchall()
         return [dict(r) for r in rows]

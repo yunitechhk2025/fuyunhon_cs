@@ -446,12 +446,70 @@
         return id;
       }
 
+      // ---------------- 聊天记录逐条落库（刷新后按原样重放的"治本"机制） ----------------
+      // conversations 表每条对话只存一行最终状态（最终的问题内容、最终留的邮箱等），刷新页面
+      // 如果只靠它"推演"聊天记录，转人工这类多步流程的过程性消息（"好的，请您简单描述…"、
+      // "人工客服正忙，留下你的邮箱…"、第一次确认语等）就会丢失或措辞对不上，看起来像换了
+      // 一个界面。这里改成：每显示一条消息气泡就往后端落库一行（chat_messages 明细表），DOM
+      // 里的每个气泡对应明细表里的一行；等待类气泡"先占位、后原地更新"（"AI 正在思考…"最终
+      // 被答案替换时，同一行记录的内容也跟着更新）。刷新页面时按明细逐条重放，跟刷新前看到
+      // 的完全一致。落库请求全部通过一个串行队列按显示顺序依次发出，保证入库顺序不会因为
+      // 网络并发而乱掉；单次落库失败只影响那一条的恢复，静默忽略、不影响聊天本身。
+      let recordQueue = Promise.resolve();
+      // 重放历史时置为 false：恢复出来的气泡本来就在明细表里，不能再记一遍（会越刷越多）。
+      let recordingEnabled = true;
+
+      function recordBubble(el, role, kind, opts) {
+        if (!recordingEnabled) return;
+        opts = opts || {};
+        const afterEl = opts.afterEl || null;
+        el._recordId = new Promise((resolve) => {
+          recordQueue = recordQueue
+            .then(async () => {
+              const payload = {
+                session_id: getSessionId(),
+                role,
+                kind: kind || "text",
+                content: opts.content != null ? opts.content : el.textContent || "",
+                conversation_id: opts.conversationId || null,
+              };
+              if (afterEl && afterEl._recordId) {
+                payload.after_id = await afterEl._recordId;
+              }
+              const res = await fetch("/api/chat-messages", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              });
+              const data = await res.json();
+              resolve(data.id || null);
+            })
+            .catch(() => resolve(null));
+        });
+      }
+
+      function updateBubbleRecord(el, fields) {
+        if (!el || !el._recordId) return;
+        recordQueue = recordQueue
+          .then(async () => {
+            const id = await el._recordId;
+            if (!id) return;
+            await fetch(`/api/chat-messages/${id}/update`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(Object.assign({ session_id: getSessionId() }, fields)),
+            });
+          })
+          .catch(() => {});
+      }
+
       function addMessage(text, role) {
         const el = document.createElement("div");
         el.className = `message ${role}`;
         el.textContent = text;
         messages.appendChild(el);
         messages.scrollTop = messages.scrollHeight;
+        recordBubble(el, role, "text");
         return el;
       }
 
@@ -472,6 +530,8 @@
           messages.appendChild(el);
         }
         messages.scrollTop = messages.scrollHeight;
+        // 落库时同样带上"插在哪条消息后面"，明细表里的顺序才能跟 DOM 里看到的一致。
+        recordBubble(el, role, "text", { afterEl });
         return el;
       }
 
@@ -493,12 +553,16 @@
           el.textContent = raw;
         }
         messages.scrollTop = messages.scrollHeight;
+        // 等待文案也要同步进明细：刷新时据此原样恢复出"还在等待中"的气泡（原始文本里保留
+        // "..."，重放时同样会渲染成跳动圆点）。
+        updateBubbleRecord(el, { content: raw });
       }
 
       // 已经有确定结果（真正的回复，或彻底放弃等待）时用这个：纯文字，不再带动态点。
       function setFinalText(el, text) {
         el.textContent = text;
         messages.scrollTop = messages.scrollHeight;
+        updateBubbleRecord(el, { content: text });
       }
 
       // 未命中转人工等太久（10 秒）时，就地给客户一个留邮箱的入口：填了才提交，
@@ -509,6 +573,10 @@
         const textEl = document.createElement("div");
         textEl.textContent = "人工客服正忙，留下你的邮箱，客服稍后通过邮箱回复您";
         el.appendChild(textEl);
+
+        // 明细里标记成 email_form：刷新时如果这条对话还没留邮箱也没被回复，要把这个气泡
+        // 重新渲染成可以填邮箱的表单，而不是一句填不了的静态文字。
+        updateBubbleRecord(el, { content: textEl.textContent, kind: "email_form", conversation_id: conversationId });
 
         const row = document.createElement("div");
         row.className = "email-capture";
@@ -580,6 +648,10 @@
         const textEl = document.createElement("div");
         textEl.textContent = "好的，请您简单描述一下想咨询的具体问题，我们马上为您转接人工客服～";
         el.appendChild(textEl);
+
+        // 明细里标记成 transfer_form：刷新时如果客户还没提交补充问题（awaiting_transfer_details
+        // 还是 1），要把这个气泡重新渲染成可填写的表单，让客户能接着把流程走完。
+        updateBubbleRecord(el, { content: textEl.textContent, kind: "transfer_form", conversation_id: conversationId });
 
         const questionInput = document.createElement("textarea");
         questionInput.className = "transfer-question-input";
@@ -669,6 +741,9 @@
               // "请耐心等待客服通过邮箱【xxx】回复您～"的提示，带上客户刚填的具体邮箱
               // （emailProvided=true，不会再弹一次输入邮箱的框，因为邮箱已经填过了）。
               setFinalText(followUp, `已将您的问题「${question}」更新给人工客服，请耐心等待客服回复您～`);
+              // kind=waiting：这个气泡是本条对话的轮询锚点，刷新时如果还没等到回复，
+              // 要从这个气泡接着轮询、"人工客服正忙"等后续提示也插在它后面。
+              updateBubbleRecord(followUp, { kind: "waiting", conversation_id: conversationId });
               pollAnswer(conversationId, followUp, false, mode, {
                 question,
                 emailProvided: true,
@@ -678,6 +753,7 @@
               // 没留邮箱：先确认已经把具体问题更新给客服；如果等太久（>10秒）客服仍未回复，
               // 会像常规流程一样在下面新增一条"人工客服正忙，留邮箱"的提示。
               setFinalText(followUp, `已将你的问题「${question}」更新给人工客服。`);
+              updateBubbleRecord(followUp, { kind: "waiting", conversation_id: conversationId });
               pollAnswer(conversationId, followUp, false, mode, { question, emailProvided: false }).catch(() => {});
             }
           } catch (err) {
@@ -768,10 +844,127 @@
         const existingSessionId = sessionStorage.getItem(SESSION_KEY);
         if (!existingSessionId) return;
         try {
-          const res = await fetch(`/api/conversations/by-session/${encodeURIComponent(existingSessionId)}`);
-          if (!res.ok) return;
-          const data = await res.json();
-          (data.items || []).forEach((item) => {
+          const [msgRes, convRes] = await Promise.all([
+            fetch(`/api/chat-messages/by-session/${encodeURIComponent(existingSessionId)}`),
+            fetch(`/api/conversations/by-session/${encodeURIComponent(existingSessionId)}`),
+          ]);
+          if (!convRes.ok) return;
+          const convItems = ((await convRes.json()) || {}).items || [];
+          let msgItems = [];
+          if (msgRes.ok) {
+            msgItems = ((await msgRes.json()) || {}).items || [];
+          }
+          if (msgItems.length) {
+            replayChatMessages(msgItems, convItems);
+          } else {
+            // 老会话兜底：这个会话开始于"逐条落库"功能上线之前，明细表里没有记录，只能按
+            // 旧方式用对话的最终状态推演出近似的聊天记录（推演过程中产生的气泡会照常落库，
+            // 从这之后的刷新就能走上面按明细逐条重放的新路径了）。
+            restoreHistoryFromConversations(convItems);
+          }
+        } catch (err) {
+          // 拉取历史失败时静默忽略，不影响客户继续正常提问
+        }
+      }
+
+      // 治本方案的核心：把明细表里的消息按显示顺序逐条重放，DOM 里的每个气泡跟落库时
+      // 一一对应，刷新前看到什么、刷新后就是什么。只有两类气泡需要"复活"成可交互状态：
+      // 1）还没提交的表单（补充问题表单 / 留邮箱表单）要重新渲染成表单而不是静态文字；
+      // 2）还没等到最终回复的等待气泡要接回轮询（并根据明细里是否已有"人工客服正忙"提示
+      //    决定要不要再起 10 秒计时器，避免重复补一条）。其余一律按静态文字原样展示。
+      function replayChatMessages(msgItems, convItems) {
+        const convById = {};
+        convItems.forEach((c) => {
+          convById[c.id] = c;
+        });
+
+        // 预扫描：每条对话是否已经出现过"人工客服正忙"这类提示（busy_note/email_form），
+        // 以及最终答案是否已经在刷新前就写进过某个气泡（内容完全一致即视为已展示过）。
+        const busyShownByConv = {};
+        const answerShownByConv = {};
+        msgItems.forEach((row) => {
+          if (!row.conversation_id) return;
+          if (row.kind === "busy_note" || row.kind === "email_form") {
+            busyShownByConv[row.conversation_id] = true;
+          }
+          const conv = convById[row.conversation_id];
+          if (conv && conv.status === "answered" && conv.answer && row.content === conv.answer) {
+            answerShownByConv[row.conversation_id] = true;
+          }
+        });
+
+        const waitingElByConv = {};
+        const emailFormElByConv = {};
+
+        // 重放期间关闭落库：这些气泡本来就在明细表里，再记一遍会越刷越多。
+        recordingEnabled = false;
+        try {
+          msgItems.forEach((row) => {
+            const conv = row.conversation_id ? convById[row.conversation_id] : null;
+
+            // 补充问题表单：客户还没提交过（awaiting_transfer_details=1）就要复活成表单，
+            // 提交过了就只剩那句引导语，按静态文字展示。
+            if (row.kind === "transfer_form" && conv && conv.awaiting_transfer_details) {
+              const el = addMessage("", "bot");
+              renderTransferQuestionPrompt(el, conv.id, conv.mode_used === "manual", conv.mode_used);
+              el._recordId = Promise.resolve(row.id);
+              return;
+            }
+
+            // 留邮箱表单：还没回复、也还没留过邮箱，复活成表单；否则按静态文字展示
+            // （留过邮箱后表单的输入框在实时流程里也已经收起，只剩提示文字）。
+            if (row.kind === "email_form" && conv && conv.status !== "answered" && !conv.email) {
+              const el = addMessage("", "bot");
+              renderLeaveEmailPrompt(el, conv.id, conv.question);
+              el._recordId = Promise.resolve(row.id);
+              emailFormElByConv[conv.id] = el;
+              return;
+            }
+
+            // 等待气泡（轮询锚点）：对话已回复且答案在刷新前就写进过气泡→按静态文字展示；
+            // 还没回复（或答案产生于页面关闭期间、还没展示过）→恢复等待样式并记下来，
+            // 稍后统一接回轮询。
+            if (row.kind === "waiting") {
+              if (!conv) return; // 占位气泡还没来得及关联到对话就刷新了（亚秒级窗口），丢弃
+              const el = addMessage("", "bot");
+              if (conv.status === "answered" && (answerShownByConv[conv.id] || !conv.answer)) {
+                setFinalText(el, row.content);
+              } else {
+                setThinkingText(el, row.content);
+                waitingElByConv[conv.id] = el;
+              }
+              el._recordId = Promise.resolve(row.id);
+              return;
+            }
+
+            if (!row.content) return; // 空占位气泡（比如请求出错后没写入内容），跳过
+            const el = addMessage(row.content, row.role === "user" ? "user" : "bot");
+            el._recordId = Promise.resolve(row.id);
+          });
+        } finally {
+          recordingEnabled = true;
+        }
+
+        // 接回轮询：elapsedMs 用真实提问时间算，busy 提示出现过就不再重复；如果留邮箱表单
+        // 也被复活了，把它作为 followUpEl 传进去，最终答案照旧写进那个气泡。
+        Object.keys(waitingElByConv).forEach((convId) => {
+          const conv = convById[convId];
+          if (!conv) return;
+          pollAnswer(conv.id, waitingElByConv[convId], !!conv.matched, conv.mode_used, {
+            question: conv.question,
+            emailProvided: conv.has_email,
+            email: conv.email || "",
+            elapsedMs: elapsedMsSince(conv.created_at),
+            skipBusy: !!busyShownByConv[conv.id],
+            followUpEl: emailFormElByConv[conv.id] || null,
+          }).catch(() => {});
+        });
+      }
+
+      // 旧版"推演式"恢复，仅作为明细表为空（功能上线前的老会话）时的兜底保留。
+      function restoreHistoryFromConversations(items) {
+        try {
+          (items || []).forEach((item) => {
             addMessage(item.question, "user");
             // 客户当时如果留了邮箱（无论是主动转人工时一并填写的，还是"人工客服正忙"提示下
             // 补填的），实时聊天里会单独显示一条「📧 邮箱」的气泡；刷新恢复历史记录时如果漏了
@@ -812,6 +1005,9 @@
               ? "AI 正在思考您的问题，请稍候..."
               : "已收到您的问题，正在为您转接人工客服，请稍候";
             setThinkingText(bubble, initialText);
+            // 兜底推演出的气泡会照常落库（recordingEnabled 一直是 true），这里补上等待锚点
+            // 标记，这样下一次刷新就能直接走"按明细逐条重放"的新路径，不用再推演一遍。
+            updateBubbleRecord(bubble, { kind: "waiting", conversation_id: item.id });
             pollAnswer(item.id, bubble, item.matched, item.mode_used, {
               question: item.question,
               emailProvided: item.has_email,
@@ -868,7 +1064,12 @@
         // 两条都要保留在对话记录里，followUpEl 记录新增的那一条，方便最终答案写入。
         // 全人工模式没有这个提示（见下方 isManual 分支），但客服的最终回复同样要另起一条
         // 新消息，不能覆盖掉"已收到您的问题"这条——到真正拿到回复时才现场创建这条新消息。
-        let followUpEl = null;
+        // options.followUpEl：刷新恢复历史时，"人工客服正忙/留邮箱"的气泡已经按明细重放
+        // 出来了，直接沿用那个气泡当锚点，最终答案照旧写进它里面，不要再新建一个。
+        // options.skipBusy：刷新恢复时如果明细里已经有"人工客服正忙"这类提示（说明刷新前
+        // 就已经出现过了），就不要再起计时器重复补一条。
+        let followUpEl = options.followUpEl || null;
+        const skipBusy = !!options.skipBusy;
 
         // matched=true 说明题库已命中、AI 正在准备自动发送，这个等待过程从头到尾都跟"人工客服"无关，
         // 全程只应该出现"AI"相关的话术，绝不能出现"转人工/人工客服正忙"这类文案，避免误导客户。
@@ -878,7 +1079,7 @@
         // 全人工模式完全不需要"留邮箱"这套机制——问题已经直接进了工作台待处理队列，客服本就
         // 要一直盯着处理，所以全人工模式下即使等了 10 秒也不弹任何提示，安静持续轮询即可。
         const isManual = mode === "manual";
-        const busyTimer = isManual
+        const busyTimer = isManual || skipBusy
           ? null
           : matched
           ? setTimeout(() => {
@@ -900,6 +1101,9 @@
                   ? `人工客服正忙，已邮件通知客服，请耐心等待客服通过邮箱【${email}】回复您～`
                   : "人工客服正忙，已通知客服，请耐心等待客服回复您～";
                 setFinalText(followUpEl, confirmText);
+                // busy_note：刷新恢复时据此判断"人工客服正忙"提示已经出现过（skipBusy），
+                // 不要再起计时器重复补一条。
+                updateBubbleRecord(followUpEl, { kind: "busy_note", conversation_id: conversationId });
               }
             }, remainingMs)
           : setTimeout(() => {
@@ -923,6 +1127,9 @@
               // 后面，理由同上，避免多条历史对话同时轮询到结果时彼此的回复次序被打乱）。
               const targetEl = followUpEl || (isManual ? addMessageAfter(loadingEl, "", "bot") : loadingEl);
               setFinalText(targetEl, data.answer);
+              // 拿到最终回复后这个气泡就是一条普通文字消息了（哪怕它之前是留邮箱的表单），
+              // 明细里也改回 text，刷新重放时直接按静态文字渲染。
+              updateBubbleRecord(targetEl, { kind: "text", conversation_id: conversationId });
               return;
             }
           } catch (err) {
@@ -944,12 +1151,17 @@
         addMessage(text, "user");
         const loading = addMessage("", "bot");
         setThinkingText(loading, "AI 正在分析您的问题...");
+        // 先标成 waiting：万一客户在后端响应回来之前的一瞬间刷新页面，这个还没关联到任何
+        // 对话的占位气泡会在重放时被直接丢弃（waiting 且无对话），而不是变成一句永远停在
+        // "AI 正在分析"的静态文字。后端响应回来后会带上真正的对话 id 再更新一次。
+        updateBubbleRecord(loading, { kind: "waiting" });
         send.disabled = true;
 
         try {
           const data = await ask(text);
           if (data.status === "answered") {
             setFinalText(loading, data.answer);
+            updateBubbleRecord(loading, { kind: "text", conversation_id: data.conversation_id });
           } else if (data.need_transfer_details) {
             // 客户直接说了"转人工"之类，明确要求转接真人：不用再演"AI 思考/等待"这段过程，
             // 直接请客户补充具体问题（全人工模式下不需要再选填邮箱）。这里先不轮询——客户还
@@ -963,6 +1175,9 @@
               loading,
               data.matched ? "AI 正在思考您的问题，请稍候..." : "已收到您的问题，正在为您转接人工客服，请稍候"
             );
+            // kind=waiting：这个气泡是本条对话的轮询锚点，刷新时如果还没等到回复，要从
+            // 这个气泡接着轮询，后续的"人工客服正忙"等提示也插在它后面。
+            updateBubbleRecord(loading, { kind: "waiting", conversation_id: data.conversation_id });
             // 同上，不 await，避免发送按钮被长时间轮询锁死。
             pollAnswer(data.conversation_id, loading, data.matched, data.mode, { question: text }).catch(() => {});
           }
