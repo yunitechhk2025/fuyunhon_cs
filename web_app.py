@@ -286,6 +286,21 @@ def _is_explicit_transfer_request(text: str) -> bool:
     return bool(_EXPLICIT_TRANSFER_PATTERN.search(text.strip()))
 
 
+# 骂人/人身攻击这类内容，字数往往很短（"你是傻子"这种四五个字），单靠 AI 语义判断不够稳：
+# 真实发生过被误判成"命中题库、匹配度100%"直接当成正常问题回复的 bug（短文本的语义检索容易
+# 凑巧跟某条无关的题库内容算出很高的相似度）。这里用关键词硬规则兜底，命中就直接判定为无关，
+# 不依赖 AI 调用是否成功、判断是否到位；只有关键词没命中的模糊情况，才交给 AI 做语义判断。
+_ABUSIVE_PATTERN = re.compile(
+    r"(傻[子瓜逼比]|笨蛋|蠢货|蠢[比货]|智障|脑残|白痴|废物|滚开|你妈|尼玛|贱人|婊子|"
+    r"操你|去死|fuck|shit|bitch|asshole|f\*ck|stfu)",
+    re.IGNORECASE,
+)
+
+
+def _is_abusive_language(text: str) -> bool:
+    return bool(_ABUSIVE_PATTERN.search(text.strip()))
+
+
 # 判断客户填写的邮箱是否是"看起来真的邮箱"（而不是随便打几个字符），只有格式合法才会真正
 # 发邮件通知客服；宁可拒绝一个格式有问题的邮箱，也不要发一封没法送达/客服没法回复的邮件。
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -324,6 +339,7 @@ def _classify_irrelevant(question: str, product: str, model: Optional[str]) -> b
         "（注意这和'怎么辨别真伪''在哪买正品才不会买到假货'这类关于防伪、正品渠道的正常疑虑完全不同，"
         "后者必须判定为相关，只有字面上就是在问'哪里能买到假货本身'才算这一类）。\n"
         "4. 内容低俗/色情/脏话骂人/人身攻击、明显违法违规、或涉及政治敏感/国家安全等违禁话题的提问或言论，"
+        "例如：你是傻子、你们客服都是废物、骂人的话、色情低俗内容。"
         "不管是否提到产品，只要字面内容本身带有这类不当性质就算这一类。\n"
         "只有在你非常确信客户这句话完全不构成真实客服需求时，才判定为无关；只要哪怕有一点点可能是在问"
         "产品本身、成分、功效、使用方法、适用人群、购买渠道、防伪辨别、售后等内容，就必须判定为相关，"
@@ -355,6 +371,15 @@ def _classify_irrelevant(question: str, product: str, model: Optional[str]) -> b
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] 无关提问识别调用失败，按正常问题处理: {exc}", file=sys.stderr)
         return False
+
+
+def _is_irrelevant_question(question: str, product: str, model: Optional[str]) -> bool:
+    """判断是否该按"无关闲聊"处理：先用关键词硬规则拦截明显的骂人/人身攻击（见
+    _is_abusive_language 的说明），命中就直接判定为无关，不必等 AI 判断；关键词没命中的
+    模糊情况，才交给 AI 做语义判断（原有的三类闲聊/荒谬提问/恶作剧式提问逻辑不变）。"""
+    if _is_abusive_language(question):
+        return True
+    return _classify_irrelevant(question, product, model)
 
 
 def _irrelevant_reply(product: str) -> str:
@@ -732,7 +757,7 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
     # 工作台随时关闭这个判断（一键退回"全部按正常问题处理"）。打招呼、明确要求转人工的都已在
     # 上面单独处理，这里跳过，避免重复消耗一次 AI 调用、也避免被误判。
     if not is_greeting and not is_explicit_transfer and database.get_setting("skip_irrelevant_enabled", "true") == "true":
-        if _classify_irrelevant(question, product, req.model):
+        if _is_irrelevant_question(question, product, req.model):
             irrelevant_reply = _irrelevant_reply(product)
             database.set_retrieval_info(conversation_id, True, "无关闲聊/非常规提问", irrelevant_reply, 1.0)
             database.mark_answered(conversation_id, irrelevant_reply)
@@ -934,7 +959,7 @@ async def submit_transfer_question(conversation_id: int, req: TransferQuestionRe
     # 硬推给人工客服处理。命中的话直接按无关闲聊处理并结束：不进入转人工等待状态、不发邮件
     # 通知客服、不广播给工作台，客户端直接看到引导语，整个转人工流程到此终止。
     if database.get_setting("skip_irrelevant_enabled", "true") == "true":
-        if _classify_irrelevant(question, conversation["product"], None):
+        if _is_irrelevant_question(question, conversation["product"], None):
             irrelevant_reply = _irrelevant_reply(conversation["product"])
             database.set_retrieval_info(conversation_id, True, "无关闲聊/非常规提问", irrelevant_reply, 1.0)
             database.mark_answered(conversation_id, irrelevant_reply)

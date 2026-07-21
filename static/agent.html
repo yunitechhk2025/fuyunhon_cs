@@ -211,6 +211,24 @@
         min-height: 0;
       }
 
+      .conv-search {
+        padding: 12px 16px 0;
+      }
+
+      .conv-search input {
+        width: 100%;
+        border: 1px solid #d7dfec;
+        border-radius: 10px;
+        padding: 8px 12px;
+        font: inherit;
+        font-size: 13px;
+        outline: none;
+      }
+
+      .conv-search input:focus {
+        border-color: #009c84;
+      }
+
       .filter-tabs {
         display: flex;
         gap: 6px;
@@ -260,6 +278,24 @@
 
       .conv-item.active {
         background: #e3f5f1;
+      }
+
+      /* .conv-avatar 本身 overflow:hidden（用来裁掉溢出的编号文字），红点如果做成它的
+         子元素会被一起裁掉，所以红点改成挂在外面这层不裁剪的 wrapper 上。 */
+      .conv-avatar-wrap {
+        position: relative;
+        flex-shrink: 0;
+      }
+
+      .unread-dot {
+        position: absolute;
+        top: -2px;
+        right: -2px;
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        background: #e0433d;
+        border: 2px solid #fff;
       }
 
       .conv-avatar {
@@ -915,6 +951,9 @@
 
       <div class="app-layout" id="app-layout">
         <div class="sidebar">
+          <div class="conv-search">
+            <input type="text" id="conv-search-input" placeholder="搜索访客编号，如 13 / 访客13" />
+          </div>
           <div class="filter-tabs" id="filter-tabs">
             <div class="filter-tab active" data-filter="all">全部</div>
             <div class="filter-tab" data-filter="pending">待处理</div>
@@ -1080,6 +1119,7 @@
       const whoName = document.getElementById("who-name");
       const convList = document.getElementById("conv-list");
       const filterTabs = document.getElementById("filter-tabs");
+      const convSearchInput = document.getElementById("conv-search-input");
       const threadEl = document.getElementById("thread");
       const appLayoutEl = document.getElementById("app-layout");
       const modeSwitchEl = document.getElementById("mode-switch");
@@ -1138,6 +1178,7 @@
       let selectedSessionId = null;
       let sessionMessages = []; // 当前打开会话的全部提问/回复，按时间顺序
       let activeFilter = "all";
+      let searchKeyword = "";
 
       // WebSocket 推送、5 秒兜底轮询都会触发整段消息列表重新渲染（renderThread），如果回复框的
       // 内容完全依赖 DOM 现状，客服刚打几个字，下一次重新渲染就会把输入框整个替换掉、打的字全部
@@ -1614,8 +1655,17 @@
         return true;
       }
 
+      // 访客没有真实姓名，搜索框按"访客编号"匹配——支持直接输数字（13）或带前缀（访客13），
+      // 输入框留空时不过滤，跟原来的行为一致。
+      function matchesSearch(session) {
+        const keyword = searchKeyword.trim();
+        if (!keyword) return true;
+        const visitorNo = session.visitor_no ? String(session.visitor_no) : "";
+        return visitorLabel(session).includes(keyword) || visitorNo.includes(keyword);
+      }
+
       function renderConvList() {
-        const filtered = sessions.filter(matchesFilter);
+        const filtered = sessions.filter((session) => matchesFilter(session) && matchesSearch(session));
 
         if (filtered.length === 0) {
           convList.innerHTML = `<div class="conv-empty">暂无对话记录</div>`;
@@ -1627,7 +1677,10 @@
             const active = session.session_id === selectedSessionId ? "active" : "";
             return `
               <div class="conv-item ${active}" data-session-id="${escapeHtml(session.session_id)}">
-                <div class="conv-avatar ${avatarClassFor(session)}">${escapeHtml(avatarLabel(session))}</div>
+                <div class="conv-avatar-wrap">
+                  <div class="conv-avatar ${avatarClassFor(session)}">${escapeHtml(avatarLabel(session))}</div>
+                  ${session.pending_count > 0 ? '<span class="unread-dot"></span>' : ""}
+                </div>
                 <div class="conv-main">
                   <div class="conv-top">
                     <span class="conv-id">${escapeHtml(visitorLabel(session))}</span>
@@ -1654,6 +1707,11 @@
           tab.classList.add("active");
           renderConvList();
         });
+      });
+
+      convSearchInput.addEventListener("input", () => {
+        searchKeyword = convSearchInput.value;
+        renderConvList();
       });
 
       async function selectSession(sessionId) {
