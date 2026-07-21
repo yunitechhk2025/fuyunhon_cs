@@ -302,16 +302,10 @@ def _greeting_reply(product: str) -> str:
     return "您好，我是澳洲肤润康 AI 客服，请问有什么想了解的呢？您可以直接告诉我想咨询的问题，我马上为您查询～"
 
 
-# 与产品咨询完全无关的闲聊/荒谬提问（"吃饭了吗""明天是不是要下雨"之类），不应该像
+# 与产品咨询完全无关的闲聊/荒谬提问（"吃饭了吗""这产品对国家安全有危害吗"之类），不应该像
 # 正常问题一样转人工——但这类说法千变万化，没法像打招呼一样靠关键词穷举，需要 AI 做语义判断。
 # 出于风险控制，只有 AI 非常确信"完全无关"时才会判定为 True；任何模糊情况或调用异常都返回
 # False，退回到原有的检索/转人工流程，避免真实的客户问题被误判成"无关"而悄悄漏单。
-#
-# 特别注意：涉及低俗/色情、不道德、国家安全、政治敏感、暴力、违禁品等严肃或敏感内容的提问，
-# 不属于这里说的"无关闲聊"，必须一律判定为相关——这类内容风险高，恰恰需要走正常流程（题库
-# 查不到会转人工，由客服人工介入判断处理），不能被这里当成"无聊提问"悄悄过滤掉、不了了之，
-# 否则公司会错过本该由人工审核处理的敏感信息（曾经把"国家安全"类提问误判成无关闲聊，属于
-# 已知的错误示范，现已修正）。
 # 管理员可在工作台通过 skip_irrelevant_enabled 设置随时关闭这个判断，一键退回"全部按正常问题处理"。
 def _classify_irrelevant(question: str, product: str, model: Optional[str]) -> bool:
     try:
@@ -322,20 +316,19 @@ def _classify_irrelevant(question: str, product: str, model: Optional[str]) -> b
     product_label = PRODUCTS.get(product, {}).get("label", "该产品")
     system_prompt = (
         f"你是电商客服的预处理模块，只做一件事：判断客户这句话是否与「{product_label}」的产品咨询完全无关，"
-        "或者是明显不构成真实客服需求的无聊/挑逗性提问。\n"
-        "包括两类：\n"
-        "1. 纯粹的日常闲聊/寒暄，不构成真正的问题，例如：吃饭了吗、天气怎么样、讲个笑话、你多大了、"
-        "今天股票涨了吗、你支持谁当总统。\n"
-        "2. 字面上就不是在向官方客服寻求正常帮助的挑逗性/恶作剧式提问，例如：向官方客服问哪里能买到假货/仿品"
+        "或者是明显不构成真实客服需求的无聊/挑逗性/不当提问。\n"
+        "包括四类：\n"
+        "1. 纯粹的日常闲聊/寒暄，不构成真正的问题，例如：吃饭了吗、天气怎么样、讲个笑话、你多大了。\n"
+        "2. 与产品/护肤/使用场景毫无关系的荒谬、挑衅性、无意义提问，例如：这个产品对国家安全有危害吗、你支持谁当总统。\n"
+        "3. 字面上就不是在向官方客服寻求正常帮助的挑逗性/恶作剧式提问，例如：向官方客服问哪里能买到假货/仿品"
         "（注意这和'怎么辨别真伪''在哪买正品才不会买到假货'这类关于防伪、正品渠道的正常疑虑完全不同，"
         "后者必须判定为相关，只有字面上就是在问'哪里能买到假货本身'才算这一类）。\n"
-        "重要例外：涉及低俗/色情、不道德、国家安全、政治敏感、暴力、违禁品等严肃或敏感内容的提问，"
-        "不管是否与产品有关，都不属于上面这两类'无聊闲聊'，必须一律判定为相关（false），要转交人工"
-        "客服处理，绝不能当成无关闲聊过滤掉。\n"
-        "只有在你非常确信客户这句话完全不构成真实客服需求、且不涉及上述敏感内容时，才判定为无关；"
-        "只要哪怕有一点点可能是在问产品本身、成分、功效、使用方法、适用人群、购买渠道、防伪辨别、"
-        "售后等内容，或者涉及低俗/不道德/国家安全/政治敏感等严肃话题，就必须判定为相关，"
-        "不确定的一律判定为相关——宁可放过，不可错判。\n"
+        "4. 内容低俗/色情/脏话骂人/人身攻击、明显违法违规、或涉及政治敏感/国家安全等违禁话题的提问或言论，"
+        "不管是否提到产品，只要字面内容本身带有这类不当性质就算这一类。\n"
+        "只有在你非常确信客户这句话完全不构成真实客服需求时，才判定为无关；只要哪怕有一点点可能是在问"
+        "产品本身、成分、功效、使用方法、适用人群、购买渠道、防伪辨别、售后等内容，就必须判定为相关，"
+        "不确定的一律判定为相关——宁可放过，不可错判（第 4 类不当内容除外，只要命中就必须判定为无关，"
+        "不能因为顺带提到了产品就放过）。\n"
         '只输出如下 JSON，不要输出任何其他文字：{"irrelevant": true 或 false}'
     )
     try:
@@ -732,13 +725,11 @@ async def ask(req: AskRequest, request: Request) -> AskResponse:
 
     conversation_id = database.create_conversation(session_id, question, mode, _client_ip(request), product)
 
-    # 与产品咨询完全无关的闲聊/荒谬提问（"吃饭了吗""明天是不是要下雨"之类）：不进人工
+    # 与产品咨询完全无关的闲聊/荒谬提问（"吃饭了吗""这产品对国家安全有危害吗"之类）：不进人工
     # 队列、不发邮件提醒，只在客户端展示一句引导语；但仍然完整落库（标记成 matched=True、附上
     # "无关闲聊/非常规提问"这个说明，跟问候语的记录方式一致），方便管理员事后能在对话记录/刷新
     # 恢复的聊天记录里都看到这条消息，同时也不会被误计入"转人工请求次数"这类统计。管理员可在
-    # 工作台随时关闭这个判断（一键退回"全部按正常问题处理"）。注意：涉及低俗/不道德/国家安全/
-    # 政治敏感/违禁内容等严肃或敏感提问不属于这里说的"无关闲聊"，会被 `_classify_irrelevant`
-    # 判定为相关、正常走检索/转人工流程，不会被这里悄悄过滤掉。打招呼、明确要求转人工的都已在
+    # 工作台随时关闭这个判断（一键退回"全部按正常问题处理"）。打招呼、明确要求转人工的都已在
     # 上面单独处理，这里跳过，避免重复消耗一次 AI 调用、也避免被误判。
     if not is_greeting and not is_explicit_transfer and database.get_setting("skip_irrelevant_enabled", "true") == "true":
         if _classify_irrelevant(question, product, req.model):
@@ -938,6 +929,17 @@ async def submit_transfer_question(conversation_id: int, req: TransferQuestionRe
     if not updated:
         raise HTTPException(status_code=404, detail="对话不存在")
 
+    # 客户明确说"转人工"之后补充的这个具体问题，同样要过一遍"无关闲聊/低俗/违法/涉政等不当
+    # 内容"判断——否则客户可以直接靠说一句"转人工"绕开题库检索这道判断，把无关或不当内容
+    # 硬推给人工客服处理。命中的话直接按无关闲聊处理并结束：不进入转人工等待状态、不发邮件
+    # 通知客服、不广播给工作台，客户端直接看到引导语，整个转人工流程到此终止。
+    if database.get_setting("skip_irrelevant_enabled", "true") == "true":
+        if _classify_irrelevant(question, conversation["product"], None):
+            irrelevant_reply = _irrelevant_reply(conversation["product"])
+            database.set_retrieval_info(conversation_id, True, "无关闲聊/非常规提问", irrelevant_reply, 1.0)
+            database.mark_answered(conversation_id, irrelevant_reply)
+            return {"success": True, "irrelevant": True, "answer": irrelevant_reply}
+
     if email:
         database.set_customer_email(conversation_id, email)
 
@@ -956,7 +958,7 @@ async def submit_transfer_question(conversation_id: int, req: TransferQuestionRe
                 database.get_visitor_no(conversation["session_id"]),
             )
         )
-    return {"success": True}
+    return {"success": True, "irrelevant": False}
 
 
 # ---------------- 客服端 ----------------
