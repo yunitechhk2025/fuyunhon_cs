@@ -200,12 +200,23 @@
         margin-top: 10px;
       }
 
+      .composer-wrap {
+        border-top: 1px solid #e8edf5;
+        background: #ffffff;
+      }
+
       .composer {
         display: flex;
         gap: 12px;
-        padding: 16px;
-        border-top: 1px solid #e8edf5;
-        background: #ffffff;
+        padding: 16px 16px 0;
+      }
+
+      .composer-hint {
+        margin: 0;
+        padding: 8px 16px 14px;
+        font-size: 12px;
+        color: #9aa3b5;
+        line-height: 1.4;
       }
 
       textarea {
@@ -340,7 +351,11 @@
 
         .composer {
           flex-wrap: wrap;
-          padding: 10px 12px;
+          padding: 10px 12px 0;
+        }
+
+        .composer-hint {
+          padding: 6px 12px 12px;
         }
 
         textarea {
@@ -381,10 +396,13 @@
           <div class="message bot">你好，我是澳洲肤润康 AI 客服。请先选择您要咨询的产品，我再根据对应题库为您解答。</div>
         </div>
 
-        <form id="form" class="composer">
-          <textarea id="input" placeholder="例如：孕妇能用吗？" rows="1"></textarea>
-          <button id="send" type="submit">发送</button>
-        </form>
+        <div class="composer-wrap">
+          <form id="form" class="composer">
+            <textarea id="input" placeholder="例如：孕妇能用吗？" rows="1"></textarea>
+            <button id="send" type="submit">发送</button>
+          </form>
+          <p class="composer-hint">如对AI回答有疑问，可与人工客服确认</p>
+        </div>
       </section>
     </main>
 
