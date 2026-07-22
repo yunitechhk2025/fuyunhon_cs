@@ -1,0 +1,28 @@
+name: Clear conversation data
+
+# 只允许手动触发，不会在每次 push/部署时自动清空数据。
+# 在 GitHub → Actions → "Clear conversation data" → Run workflow。
+on:
+  workflow_dispatch:
+
+jobs:
+  clear:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clear conversations over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          password: ${{ secrets.ECS_PASSWORD }}
+          port: 22
+          script_stop: true
+          script: |
+            set -e
+            cd ~/fuyunhon_cs
+            git pull origin main
+            # 确保容器在跑且代码已更新到最新（含清理脚本）
+            docker compose up -d --build
+            docker compose exec -T faq-chatbot \
+              python scripts/clear_conversations.py --yes
+            echo "Conversation data cleared."
