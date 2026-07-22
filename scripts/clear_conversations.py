@@ -23,6 +23,7 @@
 """
 
 import argparse
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -55,8 +56,19 @@ def main() -> None:
 
         conn.execute("DELETE FROM chat_messages")
         conn.execute("DELETE FROM conversations")
-        conn.execute("VACUUM")
         print("\n已清空全部对话数据。")
+
+    # VACUUM 不能放在上面的事务里（SQLite 会报 cannot VACUUM from within a transaction），
+    # 等 DELETE 提交后再单独执行，用来回收磁盘空间；失败不影响清空结果。
+    if args.yes:
+        try:
+            vacuum_conn = sqlite3.connect(database.DB_PATH, timeout=10)
+            try:
+                vacuum_conn.execute("VACUUM")
+            finally:
+                vacuum_conn.close()
+        except Exception as exc:
+            print(f"（VACUUM 跳过：{exc}）")
 
 
 if __name__ == "__main__":
