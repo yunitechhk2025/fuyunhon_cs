@@ -24,6 +24,7 @@ from ws_manager import manager
 
 DEFAULT_EXCEL = "2026.01.26_肤润康-常见咨询问题_v2(1).xls"
 UREA_DOC = "urea_hand_cream_info.md"
+UREA_FAQ_EXCEL = "手霜102條問答_20260811.xlsx"
 DEFAULT_MODEL = "qwen3.6-flash"
 # 所有邮件通知的主题统一带上品牌名，方便客服在收件箱里一眼认出是哪个客服系统发的。
 BRAND_NAME = "澳洲肤润康"
@@ -39,14 +40,17 @@ HK_TZ = ZoneInfo("Asia/Hong_Kong")
 DEFAULT_DAILY_REPORT_TIME = "09:00"
 DAILY_REPORT_TICK_SECONDS = 30
 
-# 两款产品用了两种不同的知识来源：
-# - 杜鹃花酸乳霜：现成的"问题-答案"题库（Excel），专业内容原文照搬，逐字不改写。
-# - 10%尿素护手霜：暂无题库，只有一份产品说明文档（doc），没有固定问答对，
-#   AI 需要现场组织语言回答，但内容必须严格限定在文档范围内——文档没提到的内容
-#   （如孕妇能否使用等）一律视为未命中，与题库场景未命中时的转人工规则完全一致。
+# 两款产品用了两种不同的回答方式：
+# - 杜鹃花酸乳霜（excel）：现成的"问题-答案"题库，专业内容原文照搬，逐字不改写。
+# - 10%尿素护手霜（doc + faq_excel）：走文档式 RAG，由 AI 现场组织语言回答，但内容必须
+#   严格限定在资料范围内——资料没提到的内容（如孕妇能否使用等）一律视为未命中，
+#   与题库场景未命中时的转人工规则完全一致。
+#   其中 doc 是产品说明文档，faq_excel 是一份常见问答题库：题库里的每条问答会作为额外的
+#   参考资料并入检索范围，AI 必须严格遵循标准答案的事实与口径，但**不会**原样照搬输出，
+#   这样护手霜原有的生成式回答体验保持不变，只是可依据的资料变多、覆盖更全。
 PRODUCTS: dict = {
     "azelaic_cream": {"label": "澳洲肤润康 杜鹃花酸乳霜", "excel": DEFAULT_EXCEL},
-    "urea_hand_cream": {"label": "澳洲肤润康 10%尿素护手霜", "doc": UREA_DOC},
+    "urea_hand_cream": {"label": "澳洲肤润康 10%尿素护手霜", "doc": UREA_DOC, "faq_excel": UREA_FAQ_EXCEL},
 }
 DEFAULT_PRODUCT = "azelaic_cream"
 NO_KB_TEXT = "亲，这款产品的常见问题库还在整理中，已为您转接人工客服，请稍候~"
@@ -209,8 +213,28 @@ async def startup() -> None:
             if not Path(doc_path).exists():
                 print(f"[warn] 产品「{meta['label']}」配置的说明文档不存在，跳过: {doc_path}", file=sys.stderr)
                 continue
-            doc_bot = DocRagBot(doc_path=doc_path, top_k=4, min_score=float(os.getenv("DOC_MIN_SCORE", "0.15")))
-            doc_bot.build_index()
+
+            # 可选的常见问答题库：只解析出问答条目，作为额外的参考资料并入文档检索范围，
+            # 不单独建索引（避免重复计算一份用不到的向量）。题库缺失只是资料变少，
+            # 不影响产品说明文档本身的正常问答，所以只告警、不中断启动。
+            faq_items = None
+            faq_excel_name = meta.get("faq_excel")
+            if faq_excel_name:
+                faq_excel_path = BASE_DIR / faq_excel_name
+                if faq_excel_path.exists():
+                    try:
+                        faq_items = ExcelFaqRagBot(excel_path=str(faq_excel_path)).parse_items()
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[warn] 产品「{meta['label']}」的问答题库解析失败，已忽略: {exc}", file=sys.stderr)
+                else:
+                    print(
+                        f"[warn] 产品「{meta['label']}」配置的问答题库不存在，跳过: {faq_excel_path}",
+                        file=sys.stderr,
+                    )
+
+            doc_top_k = int(os.getenv("DOC_TOP_K", "6"))
+            doc_bot = DocRagBot(doc_path=doc_path, top_k=doc_top_k, min_score=float(os.getenv("DOC_MIN_SCORE", "0.15")))
+            doc_bot.build_index(faq_items=faq_items)
             bots[product_id] = doc_bot
 
     # 品牌类问题（如"是澳洲品牌？"）会被标记为 shared=True，属于跨产品共用问题：

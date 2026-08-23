@@ -53,13 +53,19 @@ class ExcelFaqRagBot:
         self.embed_model = os.getenv("FAQ_EMBED_MODEL", "text-embedding-v3")
         self.item_embeddings: Optional[np.ndarray] = None
 
+    # 答案列在不同批次的题库表格里叫法不统一（老表叫"解答"，新表叫"标准答案"）。
+    # 下面认列的逻辑本来就同时接受这两种写法，但找表头行时如果只认"解答"，
+    # 用"标准答案"的表格会因为找不到表头被整张跳过，启动时直接报"未识别到 FAQ 问答列"。
+    _ANSWER_HEADER_KEYS = ("解答", "答案")
+
     def _find_header_row(
-        self, df: pd.DataFrame, question_key: str = "咨询问题", answer_key: str = "解答"
+        self, df: pd.DataFrame, question_key: str = "咨询问题", answer_keys: Optional[Sequence[str]] = None
     ) -> Optional[int]:
+        answer_keys = answer_keys or self._ANSWER_HEADER_KEYS
         for ridx, row in df.iterrows():
             values = [str(v).strip() for v in row.tolist() if str(v).strip() and str(v) != "nan"]
             joined = " | ".join(values)
-            if question_key in joined and answer_key in joined:
+            if question_key in joined and any(key in joined for key in answer_keys):
                 return int(ridx)
         return None
 
@@ -125,11 +131,20 @@ class ExcelFaqRagBot:
     def _is_shared_question(cls, serial: str, question: str) -> bool:
         return serial.strip() in cls._SHARED_SERIAL_MARKERS or question.strip() in cls._LEGACY_SHARED_QUESTIONS
 
-    def build_index(self) -> None:
+    def parse_items(self) -> List[FaqItem]:
+        """只解析出 Excel 里的问答条目，不建立检索索引、不计算语义向量。
+
+        用于把一份题库当作"参考资料"交给别的检索器使用（护手霜就是这种用法：题库不直接
+        照搬答案，而是作为 AI 生成回答时必须严格依据的资料），避免白白构建一份用不到的索引。
+        """
         sheets = pd.read_excel(self.excel_path, sheet_name=None, header=None)
         items: List[FaqItem] = []
         for sheet_name, df in sheets.items():
             items.extend(self._sheet_to_faq_items(sheet_name, df))
+        return items
+
+    def build_index(self) -> None:
+        items = self.parse_items()
 
         if not items:
             raise ValueError("未识别到 FAQ 问答列（需要包含“咨询问题/解答”字段）。")

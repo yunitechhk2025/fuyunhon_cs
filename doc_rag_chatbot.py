@@ -78,13 +78,32 @@ class DocRagBot:
             chunks.append(DocChunk(title=title, text=body))
         return chunks
 
-    def build_index(self) -> None:
+    def build_index(self, faq_items: Optional[Sequence] = None) -> None:
+        """构建检索索引。
+
+        faq_items 是可选的题库问答对（形如 excel_rag_chatbot.FaqItem，需要有 question/answer）：
+        把每一条问答当作一个额外的资料段落并入检索范围（标题=问题，正文=标准答案）。
+        注意这里**不会**改变本模块"AI 现场组织语言回答"的定位——题库答案只是作为 AI 必须
+        严格依据的参考资料，不会被原样照搬输出，这一点与 ExcelFaqRagBot 的逐字照搬不同。
+        """
         with open(self.doc_path, "r", encoding="utf-8") as f:
             raw_text = f.read()
 
         items = self._parse_doc(raw_text)
         if not items:
             raise ValueError(f"未能从文档中解析出任何段落: {self.doc_path}")
+
+        if faq_items:
+            existing_keys = {(it.question, it.answer) for it in items}
+            for faq in faq_items:
+                question = str(getattr(faq, "question", "")).strip()
+                answer = str(getattr(faq, "answer", "")).strip()
+                if not question or not answer or (question, answer) in existing_keys:
+                    continue
+                # 保留题库条目原本的 shared 标记：这些是本产品自己的题库，除非明确标注为
+                # 跨产品共用，否则不能被上层当成共用问题同步给其他产品。
+                items.append(DocChunk(title=question, text=answer, shared=bool(getattr(faq, "shared", False))))
+                existing_keys.add((question, answer))
 
         self.items = items
         self._finalize_index()
@@ -218,7 +237,11 @@ class DocRagBot:
         system_prompt = (
             "你是澳洲肤润康10%碳酰二胺护手乳霜（10%尿素护手霜）的客服助手。\n"
             "你只能依据下面提供的《产品资料》回答用户问题，严禁使用产品资料之外的任何知识、常识或推测来补充、"
-            "延伸答案，也不能给出医疗诊断、用药调整建议或任何资料未明确提及的健康/安全结论。\n\n"
+            "延伸答案，也不能给出医疗诊断、用药调整建议或任何资料未明确提及的健康/安全结论。\n"
+            "《产品资料》里的每一段【标题】既可能是产品说明的小节名，也可能是一条常见问题；"
+            "如果标题本身就是一个问题，那么它下面的正文就是这个问题的标准答案，"
+            "你的回答必须严格遵循该标准答案的事实与口径（可以调整措辞让语气更自然，"
+            "但不得改变、增补或削弱其中的任何信息）。\n\n"
             f"《产品资料》：\n{context}\n\n"
             "判断与回答规则：\n"
             "1. 如果《产品资料》中有明确内容可以直接回答用户问题，请用简洁、亲切、口语化的语气回答，"

@@ -8,3 +8,6 @@ data/*.db
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
+
+# Office 打开文档时生成的临时锁文件（形如 ~$xxx.docx / ~$xxx.xlsx），不是项目内容
+~$*
