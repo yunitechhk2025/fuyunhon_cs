@@ -31,6 +31,10 @@ class DocChunk:
     # 与 FaqItem 保持同样的字段命名习惯，方便复用 web_app.py 里通用的检索标注/共用问题逻辑：
     # question 对应"命中的段落标题"，answer 对应该段落正文。
     shared: bool = False
+    # 资料来源："faq" 表示这条是题库里的"问题-标准答案"，"doc" 表示产品说明文档里的段落。
+    # 两者内容可能不一致（例如文档写"每天3至4次"，题库标准答案写"早晚各一次、必要时5-6次"），
+    # 交给 AI 时必须能区分开、并明确标准答案优先，否则 AI 会随机挑一份，答出跟题库不符的内容。
+    source: str = "doc"
 
     @property
     def question(self) -> str:
@@ -102,7 +106,14 @@ class DocRagBot:
                     continue
                 # 保留题库条目原本的 shared 标记：这些是本产品自己的题库，除非明确标注为
                 # 跨产品共用，否则不能被上层当成共用问题同步给其他产品。
-                items.append(DocChunk(title=question, text=answer, shared=bool(getattr(faq, "shared", False))))
+                items.append(
+                    DocChunk(
+                        title=question,
+                        text=answer,
+                        shared=bool(getattr(faq, "shared", False)),
+                        source="faq",
+                    )
+                )
                 existing_keys.add((question, answer))
 
         self.items = items
@@ -233,16 +244,30 @@ class DocRagBot:
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
     ) -> str:
-        context = "\n\n".join(f"【{item.title}】\n{item.text}" for _, item in context_chunks)
+        faq_chunks = [item for _, item in context_chunks if item.source == "faq"]
+        doc_chunks = [item for _, item in context_chunks if item.source != "faq"]
+
+        sections: List[str] = []
+        if faq_chunks:
+            faq_text = "\n\n".join(f"问：{it.title}\n标准答案：{it.text}" for it in faq_chunks)
+            sections.append(f"【A. 客服标准答案（最高优先级）】\n{faq_text}")
+        if doc_chunks:
+            doc_text = "\n\n".join(f"〔{it.title}〕\n{it.text}" for it in doc_chunks)
+            sections.append(f"【B. 产品说明文档（补充参考）】\n{doc_text}")
+        context = "\n\n".join(sections)
+
         system_prompt = (
             "你是澳洲肤润康10%碳酰二胺护手乳霜（10%尿素护手霜）的客服助手。\n"
             "你只能依据下面提供的《产品资料》回答用户问题，严禁使用产品资料之外的任何知识、常识或推测来补充、"
-            "延伸答案，也不能给出医疗诊断、用药调整建议或任何资料未明确提及的健康/安全结论。\n"
-            "《产品资料》里的每一段【标题】既可能是产品说明的小节名，也可能是一条常见问题；"
-            "如果标题本身就是一个问题，那么它下面的正文就是这个问题的标准答案，"
-            "你的回答必须严格遵循该标准答案的事实与口径（可以调整措辞让语气更自然，"
-            "但不得改变、增补或削弱其中的任何信息）。\n\n"
+            "延伸答案，也不能给出医疗诊断、用药调整建议或任何资料未明确提及的健康/安全结论。\n\n"
             f"《产品资料》：\n{context}\n\n"
+            "资料优先级（非常重要）：\n"
+            "- A 部分是客服团队审定的标准答案，是唯一权威口径。只要其中有一条问题与用户的提问是同一件事，"
+            "你就必须严格按照它的标准答案来回答：可以调整措辞让语气更自然亲切，但其中的每一个事实、数字、"
+            "条件和建议都不得改变、增补、遗漏或弱化。\n"
+            "- B 部分只是补充参考，仅在 A 部分没有覆盖用户问题时才使用。\n"
+            "- 当 A 与 B 的说法不一致时（例如使用次数、适用范围等），一律以 A 的标准答案为准，"
+            "绝对不要采用 B 的说法，也不要把两者混在一起、折中或同时列出。\n\n"
             "判断与回答规则：\n"
             "1. 如果《产品资料》中有明确内容可以直接回答用户问题，请用简洁、亲切、口语化的语气回答，"
             "内容必须完全基于资料，不能添加资料中没有的信息，不能夸大或弱化资料原意。\n"
