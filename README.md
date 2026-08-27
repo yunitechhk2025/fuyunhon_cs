@@ -296,9 +296,11 @@ python excel_rag_chatbot.py --excel "2026.01.26_肤润康-常见咨询问题_v2(
 2. 在阿里云安全组放行 `80`、`443` 入方向。
 3. 在 GitHub → Actions → **Setup Nginx site + HTTPS** → Run workflow，填写域名（默认 `ai.fuyunhon.com`）、应用端口（默认 `8000`）、证书通知邮箱，勾选「申请证书并开启 HTTPS 跳转」。
 
-该工作流（`.github/workflows/setup-nginx.yml`）会依次完成：备份 `/etc/nginx` → 写入站点配置并建立软链 → `nginx -t` 校验（失败自动撤销本次软链）→ 重载 → 校验反代命中的确实是本机 `8000` 的实例 → 安装并运行 `certbot --nginx --redirect` 申请证书、开启 HTTP→HTTPS 跳转 → 输出证书信息与最终验证结果。
+该工作流（`.github/workflows/setup-nginx.yml`）会依次完成：备份 `/etc/nginx` → 从 `deploy/nginx/site.conf.template` 渲染站点配置并建立软链 → `nginx -t` 校验（失败自动撤销本次软链）→ 重载 → 校验反代命中的确实是本机 `8000` 的实例 → 安装并运行 `certbot --nginx --redirect` 申请证书、开启 HTTP→HTTPS 跳转 → 输出证书信息与最终验证结果。
 
 脚本是幂等的，重复执行不会重复申请证书（用了 `--keep-until-expiring`），也不会改动服务器上已有的其他站点。
+
+> **维护提示**：站点配置以模板文件 `deploy/nginx/site.conf.template` 的形式放在仓库里，工作流只负责替换域名与端口两处占位符。之所以不在工作流脚本里用 heredoc 直接生成，是因为 `appleboy/ssh-action` 的 `script_stop: true` 会在脚本行之间注入退出码检查语句，这些语句会落进 heredoc 内容里污染生成的配置文件（表现为 `nginx -t` 报 `unknown directive "DRONE_SSH_PREV_COMMAND_EXIT_CODE=0"`）。因此该工作流统一用 `script_stop: false` + 脚本自身的 `set -e` 控制中断，并避免使用 heredoc 和反斜杠续行。
 
 站点配置中的以下几项是本项目必需的，改动时不要删除：
 

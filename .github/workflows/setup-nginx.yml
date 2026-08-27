@@ -6,7 +6,12 @@ name: Setup Nginx site + HTTPS
 # 并用 certbot 申请 Let's Encrypt 证书、开启 HTTP→HTTPS 跳转。
 #
 # 说明：脚本是幂等的，重复执行不会产生副作用；执行前会自动备份 /etc/nginx。
-# 已存在的其他站点（如脱敏演示版 chat.yuniagent.ai）不会被改动。
+# 已存在的其他站点（如脱敏演示版）不会被改动。
+#
+# 实现注意：这里用 script_stop: false + 脚本自身的 set -e 来控制中断。
+# appleboy/ssh-action 的 script_stop: true 会在脚本行之间注入退出码检查语句，
+# 会破坏 heredoc、反斜杠续行等跨行结构，因此不能开启。
+# 站点配置也不在脚本里用 heredoc 生成，而是从仓库的模板文件渲染。
 on:
   workflow_dispatch:
     inputs:
@@ -39,7 +44,7 @@ jobs:
           username: ${{ secrets.ECS_USER }}
           password: ${{ secrets.ECS_PASSWORD }}
           port: 22
-          script_stop: true
+          script_stop: false
           command_timeout: 10m
           script: |
             set -e
@@ -48,6 +53,8 @@ jobs:
             UPSTREAM_PORT="${{ inputs.upstream_port }}"
             ENABLE_HTTPS="${{ inputs.enable_https }}"
             CERTBOT_EMAIL="${{ inputs.certbot_email }}"
+            REPO_DIR="$HOME/fuyunhon_cs"
+            TEMPLATE="$REPO_DIR/deploy/nginx/site.conf.template"
 
             if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
 
@@ -55,11 +62,12 @@ jobs:
             command -v nginx >/dev/null || { echo "服务器上没有安装 nginx"; exit 1; }
             [ -d /etc/nginx/sites-enabled ] || { echo "缺少 /etc/nginx/sites-enabled 目录"; exit 1; }
 
+            cd "$REPO_DIR"
+            git pull origin main
+            [ -f "$TEMPLATE" ] || { echo "找不到站点模板 $TEMPLATE"; exit 1; }
+
             # 应用必须已经在本机端口上正常响应，否则配了反代也是 502
-            if ! curl -fsS -m 10 "http://127.0.0.1:${UPSTREAM_PORT}/health" > /tmp/upstream_health.txt; then
-              echo "应用在 127.0.0.1:${UPSTREAM_PORT} 上无响应，请先确认容器已启动"
-              exit 1
-            fi
+            curl -fsS -m 10 "http://127.0.0.1:${UPSTREAM_PORT}/health" > /tmp/upstream_health.txt || { echo "应用在 127.0.0.1:${UPSTREAM_PORT} 上无响应，请先确认容器已启动"; exit 1; }
             echo "上游应用响应：$(cat /tmp/upstream_health.txt)"
 
             echo "=== 1. 备份现有 Nginx 配置 ==="
@@ -67,38 +75,16 @@ jobs:
             $SUDO cp -a /etc/nginx "$BACKUP"
             echo "已备份到 $BACKUP"
 
-            echo "=== 2. 写入站点配置 ==="
-            # 注意：nginx 内置变量用 \$ 转义，避免被 shell 提前展开
-            $SUDO tee "/etc/nginx/sites-available/${DOMAIN}" > /dev/null <<EOF
-            server {
-                listen 80;
-                listen [::]:80;
-                server_name ${DOMAIN};
-
-                # 上传/长文本提问留出余量
-                client_max_body_size 10m;
-
-                location / {
-                    proxy_pass http://127.0.0.1:${UPSTREAM_PORT};
-                    proxy_http_version 1.1;
-
-                    proxy_set_header Host              \$host;
-                    proxy_set_header X-Real-IP         \$remote_addr;
-                    proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
-                    proxy_set_header X-Forwarded-Proto \$scheme;
-
-                    # 客服工作台的实时推送依赖 WebSocket
-                    proxy_set_header Upgrade    \$http_upgrade;
-                    proxy_set_header Connection "upgrade";
-
-                    # 前台轮询与 WebSocket 长连接，避免被过早断开
-                    proxy_read_timeout  3600s;
-                    proxy_send_timeout  3600s;
-                    proxy_buffering     off;
-                }
-            }
-            EOF
-
+            echo "=== 2. 渲染并写入站点配置 ==="
+            sed -e "s|__DOMAIN__|${DOMAIN}|g" -e "s|__UPSTREAM_PORT__|${UPSTREAM_PORT}|g" "$TEMPLATE" > /tmp/site.conf
+            echo "--- 渲染结果 ---"
+            cat /tmp/site.conf
+            echo "----------------"
+            if grep -q "DRONE_SSH" /tmp/site.conf; then
+              echo "渲染结果被注入了 ssh-action 的控制语句，终止"
+              exit 1
+            fi
+            $SUDO cp /tmp/site.conf "/etc/nginx/sites-available/${DOMAIN}"
             $SUDO ln -sfn "/etc/nginx/sites-available/${DOMAIN}" "/etc/nginx/sites-enabled/${DOMAIN}"
 
             echo "=== 3. 校验并重载 ==="
@@ -137,24 +123,17 @@ jobs:
             fi
 
             # --keep-until-expiring 保证重复执行时不会重复申请、不触发 Let's Encrypt 限流
-            $SUDO certbot --nginx \
-              -d "${DOMAIN}" \
-              --non-interactive \
-              --agree-tos \
-              -m "${CERTBOT_EMAIL}" \
-              --redirect \
-              --keep-until-expiring
+            $SUDO certbot --nginx -d "${DOMAIN}" --non-interactive --agree-tos -m "${CERTBOT_EMAIL}" --redirect --keep-until-expiring
 
             $SUDO nginx -t
             $SUDO systemctl reload nginx
 
             echo "=== 6. 最终验证 ==="
             echo "--- HTTPS 证书 ---"
-            echo | openssl s_client -connect "127.0.0.1:443" -servername "${DOMAIN}" 2>/dev/null \
-              | openssl x509 -noout -subject -dates 2>/dev/null || echo "(证书信息读取失败，可忽略)"
+            echo | openssl s_client -connect 127.0.0.1:443 -servername "${DOMAIN}" 2>/dev/null | openssl x509 -noout -subject -dates || echo "(证书信息读取失败，可忽略)"
 
             echo "--- HTTP 是否跳转到 HTTPS ---"
-            curl -sS -o /dev/null -D - -m 10 -H "Host: ${DOMAIN}" http://127.0.0.1/health | head -n 5 || true
+            curl -sS -o /dev/null -D - -m 10 -H "Host: ${DOMAIN}" http://127.0.0.1/health || true
 
             echo "--- HTTPS 内容 ---"
             curl -fsS -m 10 --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/health"
