@@ -285,3 +285,46 @@ python excel_rag_chatbot.py --excel "2026.01.26_肤润康-常见咨询问题_v2(
 3. `docker compose up -d --build`
 
 > **升级到三种模式后的一次性操作**：由于 `.env` 不会被 `git pull` 更新，首次部署本次更新前，请手动 SSH 登录服务器，在 `~/fuyunhon_cs/.env` 中补充 `JWT_SECRET`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`DEFAULT_MODE`（参考 `.env.example`），保存后再让 GitHub Actions 触发部署，或手动执行一次 `docker compose up -d --build`。同时确保服务器上存在 `~/fuyunhon_cs/data` 目录（`docker-compose.yml` 已配置挂载，用于持久化客服账号与对话数据）。
+
+## 8) 域名与 HTTPS（Nginx 反向代理）
+
+应用容器监听服务器本机的 `8000` 端口，对外访问统一由 Nginx 反向代理，并由 Let's Encrypt 提供 HTTPS。
+
+### 一次性配置
+
+1. 在 DNS 服务商处把域名解析（A 记录）指向服务器公网 IP。
+2. 在阿里云安全组放行 `80`、`443` 入方向。
+3. 在 GitHub → Actions → **Setup Nginx site + HTTPS** → Run workflow，填写域名（默认 `ai.fuyunhon.com`）、应用端口（默认 `8000`）、证书通知邮箱，勾选「申请证书并开启 HTTPS 跳转」。
+
+该工作流（`.github/workflows/setup-nginx.yml`）会依次完成：备份 `/etc/nginx` → 写入站点配置并建立软链 → `nginx -t` 校验（失败自动撤销本次软链）→ 重载 → 校验反代命中的确实是本机 `8000` 的实例 → 安装并运行 `certbot --nginx --redirect` 申请证书、开启 HTTP→HTTPS 跳转 → 输出证书信息与最终验证结果。
+
+脚本是幂等的，重复执行不会重复申请证书（用了 `--keep-until-expiring`），也不会改动服务器上已有的其他站点。
+
+站点配置中的以下几项是本项目必需的，改动时不要删除：
+
+- `proxy_set_header Upgrade` / `Connection "upgrade"`：客服工作台的实时消息推送走 WebSocket，缺少这两行会导致工作台收不到新消息通知。
+- `proxy_read_timeout 3600s`：前台等待人工回复时是长轮询，超时值过小会导致连接被 Nginx 提前掐断。
+- `proxy_buffering off`：避免响应被缓冲后延迟送达。
+
+### 常见问题：域名打开是别的站点 / 浏览器提示「不安全」
+
+说明 Nginx 里没有该域名对应的站点配置，请求落到了默认站点上，于是拿到的是别的域名的证书（证书名不匹配 → 浏览器报不安全），内容也来自别的实例。按上面的工作流配置一次即可。
+
+排查时可以用下面的命令确认服务器实际返回的是哪张证书：
+
+```bash
+echo | openssl s_client -connect <域名>:443 -servername <域名> 2>/dev/null | openssl x509 -noout -subject -dates
+```
+
+若 `subject` 里的 `CN` 不是你访问的域名，就是上述情况。
+
+### 关于同一台服务器上的多套实例
+
+同一台服务器上可能同时运行正式版和对外演示用的脱敏版，各自绑定独立域名。两者互不影响，但要注意：
+
+- `deploy.yml` 的自动部署只更新正式版（`~/fuyunhon_cs`），脱敏版需要单独维护，功能更新不会同步过去。
+- 两套实例的对话数据是分开的，在其中一个上产生的测试记录，在另一个的客服工作台里查不到。
+
+### 配置完成后建议收敛端口
+
+域名配好后，应用端口（`8000`）不再需要对外暴露——Nginx 走的是 `127.0.0.1:8000`，属于服务器内部访问，不受影响。建议在阿里云安全组里删掉 `8000` 的入方向规则，避免绕过 HTTPS 直接明文访问。
