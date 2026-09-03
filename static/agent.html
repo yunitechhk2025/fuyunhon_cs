@@ -1185,6 +1185,26 @@
       // 草稿箱里的内容作为输入框初始值，发送成功或客服切走该对话后再清掉，避免草稿越攒越多。
       const composeDrafts = {};
 
+      // 回复框失焦后要补一次渲染（见 bindComposeActions），但这次渲染会整段替换 DOM。
+      // 如果客服正是点「发送回复」才导致的失焦，渲染一旦插在鼠标按下与松开之间，按钮就被换成
+      // 了新节点，浏览器不认为这是一次完整点击，click 不触发。所以补渲染统一延迟一小段时间，
+      // 点击事件真正跑起来时先把它取消掉。
+      const BLUR_RENDER_DELAY_MS = 300;
+      let blurRenderTimer = null;
+
+      function scheduleBlurRender() {
+        clearTimeout(blurRenderTimer);
+        blurRenderTimer = setTimeout(() => {
+          blurRenderTimer = null;
+          renderThread();
+        }, BLUR_RENDER_DELAY_MS);
+      }
+
+      function cancelBlurRender() {
+        clearTimeout(blurRenderTimer);
+        blurRenderTimer = null;
+      }
+
       function showToast(text) {
         toastEl.textContent = text;
         toastEl.classList.add("show");
@@ -1927,16 +1947,27 @@
           });
           // 输入期间 renderThread 会跳过重渲染（见上面 renderThread 里的说明），失焦后主动
           // 补一次渲染，把输入期间攒下的新消息/状态变化追平，不用等下一次轮询/推送。
-          textarea.addEventListener("blur", () => {
-            renderThread();
+          // 但焦点如果是移到发送按钮上，这次补渲染必须跳过：渲染会整段替换 DOM，按钮在
+          // mouseup 之前就被换成新节点，click 不再触发，表现为"要点两次才发得出去"。
+          textarea.addEventListener("blur", (event) => {
+            const next = event.relatedTarget;
+            if (next && next.closest && next.closest("[data-action]")) return;
+            scheduleBlurRender();
           });
         });
 
         threadEl.querySelectorAll("[data-action]").forEach((btn) => {
           const id = btn.getAttribute("data-id");
+          // 三重保险，确保点一次就能发出去：
+          // 1) 阻止按下按钮时的默认焦点转移，回复框保持聚焦，压根不触发 blur（桌面端主路径）；
+          // 2) blur 里判断焦点去向，是发送按钮就不渲染（浏览器不支持上一条时兜底）；
+          // 3) 补渲染延迟执行，click 一跑起来就取消掉（触摸屏事件时序与鼠标不同，靠这条兜底）。
+          btn.addEventListener("mousedown", (event) => event.preventDefault());
           btn.addEventListener("click", async () => {
+            cancelBlurRender();
             try {
               const textarea = document.querySelector(`[data-answer-input="${id}"]`);
+              if (!textarea) return;
               const answer = textarea.value.trim();
               if (!answer) {
                 showToast("请输入回复内容");
@@ -1947,6 +1978,11 @@
                 body: JSON.stringify({ answer }),
               });
               delete composeDrafts[id];
+              // 回复框此时还处于聚焦状态（见上面的 mousedown 处理），而 renderThread 碰到
+              // 聚焦中的回复框会跳过渲染，这里主动失焦，让刚发出去的回复立刻显示出来。
+              textarea.blur();
+              // 失焦本身又会排一次补渲染，而下面的 refreshAll 马上就会渲染，取消掉避免重复。
+              cancelBlurRender();
               showToast("回复已发送");
               await refreshAll();
             } catch (err) {
